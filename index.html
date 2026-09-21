@@ -59,6 +59,7 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 <div class="rate"><label>Virtual earning rate (₹/hour)</label><input id="rate" type="number" min="0" step=".5" value="5"></div>
 <button class="start" id="start">▶ Start Study</button>
 <button class="pause" id="pause" disabled>⏸ Pause</button>
+<div class="row" style="max-width:650px;margin:14px auto 0;text-align:left"><div><label class="label">Study session name</label><input id="sessionName" placeholder="e.g. DSA Practice, Physics, Coding"></div></div>
 <button class="reset" id="reset">✓ Save Session</button>
 </div>
 
@@ -185,7 +186,7 @@ async function startApp(){
 async function loadCloud(){
   $('status').textContent='Loading cloud data…';
   const [s,e,cfg]=await Promise.all([
-    sb.from('study_sessions').select('id,start_time,duration_seconds,earnings').eq('user_id',user.id).order('start_time',{ascending:false}),
+    sb.from('study_sessions').select('id,start_time,duration_seconds,earnings,session_name').eq('user_id',user.id).order('start_time',{ascending:false}),
     sb.from('expenses').select('id,description,amount,created_at').eq('user_id',user.id).order('created_at',{ascending:false}),
     sb.from('settings').select('hourly_rate,daily_target_hours').eq('user_id',user.id).maybeSingle()
   ]);
@@ -230,9 +231,10 @@ $('reset').onclick=async()=>{
  if(pomo.running)pausePomodoroClock(false);
  const duration=Math.max(1,Math.round(elapsed/1000)),rate=Number($('rate').value)||0;
  $('status').textContent='Saving session…';
- const {data,error}=await sb.from('study_sessions').insert({user_id:user.id,start_time:new Date(Date.now()-elapsed).toISOString(),duration_seconds:duration,earnings:duration/3600*rate}).select().single();
+ const session_name=($('sessionName').value.trim()||'Study Session');
+ const {data,error}=await sb.from('study_sessions').insert({user_id:user.id,start_time:new Date(Date.now()-elapsed).toISOString(),duration_seconds:duration,earnings:duration/3600*rate,session_name}).select().single();
  if(error){$('status').textContent='Save failed: '+error.message;return}
- days.unshift(data);elapsed=0;last=0;$('start').disabled=false;$('pause').disabled=true;$('status').textContent='Session saved ☁️';await saveSettings();render()
+ days.unshift(data);elapsed=0;last=0;$('sessionName').value='';$('start').disabled=false;$('pause').disabled=true;$('status').textContent='Session saved ☁️';await saveSettings();render()
 }
 $('rate').oninput=()=>{render();saveSettings()}
 $('target').oninput=()=>{render();saveSettings()}
@@ -337,12 +339,26 @@ function renderSessionList(){
    const start=new Date(s.start_time),dur=Number(s.duration_seconds)||0;
    return `<div class="session-item">
      <div class="info">
-       <b>${start.toLocaleDateString()} ${start.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</b>
+       <b>${esc(s.session_name||'Study Session')}</b>
+       <small>${start.toLocaleDateString()} ${start.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small>
        <div class="meta"><span>⏱ ${fmt(dur*1000)}</span><span>💰 ${money(s.earnings)}</span></div>
      </div>
+     <button class="secondary" data-edit-session="${s.id}">Rename</button>
      <button class="danger" data-session-id="${s.id}">Delete</button>
    </div>`;
  }).join('');
+ box.querySelectorAll('[data-edit-session]').forEach(b=>b.onclick=async()=>{
+   const id=b.dataset.editSession;
+   const session=days.find(x=>String(x.id)===String(id));
+   if(!session)return;
+   const name=prompt('Enter a new name for this study session:',session.session_name||'Study Session');
+   if(name===null)return;
+   const session_name=name.trim()||'Study Session';
+   const {data,error}=await sb.from('study_sessions').update({session_name}).eq('id',id).eq('user_id',user.id).select().single();
+   if(error){alert('Could not rename session: '+error.message);return}
+   days=days.map(x=>String(x.id)===String(id)?data:x);
+   render();
+ });
  box.querySelectorAll('[data-session-id]').forEach(b=>b.onclick=async()=>{
    const id=b.dataset.sessionId;
    const session=days.find(x=>String(x.id)===String(id));
