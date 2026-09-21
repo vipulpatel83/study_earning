@@ -163,7 +163,8 @@ let pomo={phase:'work',remaining:25*60,running:false,interval:null,cycles:0};
 
 function money(n){return '₹'+Number(n||0).toFixed(2)}
 function fmt(ms){let s=Math.floor(ms/1000),h=Math.floor(s/3600);s%=3600;let m=Math.floor(s/60),x=s%60;return [h,m,x].map(v=>String(v).padStart(2,'0')).join(':')}
-function dateKey(d=new Date()){return d.toISOString().slice(0,10)}
+function dateKey(d=new Date()){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function localDateKey(iso){return dateKey(new Date(iso))}
 function showAuthMsg(msg){$('authMsg').textContent=msg;$('authMsg').style.display='block'}
 function hideAuthMsg(){$('authMsg').style.display='none'}
 
@@ -238,11 +239,11 @@ async function saveSettings(){
   settings.daily_target_hours=Math.max(.1,Number($('target').value)||4);
   await sb.from('settings').upsert({user_id:user.id,hourly_rate:settings.hourly_rate,daily_target_hours:settings.daily_target_hours});
 }
-function todayMs(){return days.filter(x=>x.start_time.slice(0,10)===dateKey()).reduce((a,x)=>a+Number(x.duration_seconds)*1000,0)+elapsed}
+function todayMs(){return days.filter(x=>localDateKey(x.start_time)===dateKey()).reduce((a,x)=>a+Number(x.duration_seconds)*1000,0)+elapsed}
 function totalExp(){return expenses.reduce((a,x)=>a+Number(x.amount),0)}
 function totalUnproductive(){return unproductive.reduce((a,x)=>a+Number(x.deduction||0),0)}
 function totalEarn(){return days.reduce((a,x)=>a+Number(x.earnings||0),0)+(elapsed/3600000*(Number($('rate').value)||0))}
-function todayEarn(){return days.filter(x=>x.start_time.slice(0,10)===dateKey()).reduce((a,x)=>a+Number(x.earnings||0),0)+(elapsed/3600000*(Number($('rate').value)||0))}
+function todayEarn(){return days.filter(x=>localDateKey(x.start_time)===dateKey()).reduce((a,x)=>a+Number(x.earnings||0),0)+(elapsed/3600000*(Number($('rate').value)||0))}
 function render(){
  $('time').textContent=fmt(elapsed);
  const ms=todayMs(),earnToday=todayEarn(),earnTotal=totalEarn(),exp=totalExp(),unprod=totalUnproductive();
@@ -304,7 +305,7 @@ function renderExpenses(){
 }
 function renderDays(){
  const arr=[];let max=1;
- for(let i=6;i>=0;i--){let d=new Date();d.setDate(d.getDate()-i);let k=dateKey(d),v=days.filter(x=>x.start_time.slice(0,10)===k).reduce((a,x)=>a+Number(x.duration_seconds),0);max=Math.max(max,v);arr.push({d,v})}
+ for(let i=6;i>=0;i--){let d=new Date();d.setDate(d.getDate()-i);let k=dateKey(d),v=days.filter(x=>localDateKey(x.start_time)===k).reduce((a,x)=>a+Number(x.duration_seconds),0);max=Math.max(max,v);arr.push({d,v})}
  $('sessions').innerHTML=arr.map(x=>`<div class="day"><div class="daybar"><div class="dayfill" style="height:${Math.max(2,x.v/max*100)}%"></div></div><small>${x.d.toLocaleDateString(undefined,{weekday:'short'})}</small></div>`).join('')
 }
 function renderMonthlyCharts(){
@@ -312,7 +313,7 @@ function renderMonthlyCharts(){
  for(let i=29;i>=0;i--){
    let d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-i);
    let k=dateKey(d);
-   let study=days.filter(x=>x.start_time.slice(0,10)===k).reduce((a,x)=>a+Number(x.duration_seconds),0)/3600;
+   let study=days.filter(x=>localDateKey(x.start_time)===k).reduce((a,x)=>a+Number(x.duration_seconds),0)/3600;
    let expense=expenses.filter(x=>x.created_at.slice(0,10)===k).reduce((a,x)=>a+Number(x.amount),0);
    studyMax=Math.max(studyMax,study);expenseMax=Math.max(expenseMax,expense);studyTotal+=study;expenseTotal+=expense;arr.push({d,study,expense});
  }
