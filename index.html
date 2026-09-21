@@ -197,17 +197,40 @@ async function startApp(){
 }
 async function loadCloud(){
   $('status').textContent='Loading cloud data…';
+  // Load the original/core data first. A problem with the optional
+  // unproductive-time feature must never hide existing study/expense data.
   const [s,e,cfg]=await Promise.all([
     sb.from('study_sessions').select('id,start_time,duration_seconds,earnings,session_name').eq('user_id',user.id).order('start_time',{ascending:false}),
     sb.from('expenses').select('id,description,amount,created_at').eq('user_id',user.id).order('created_at',{ascending:false}),
-    sb.from('unproductive_sessions').select('id,description,duration_hours,deduction,created_at').eq('user_id',user.id).order('created_at',{ascending:false}),
     sb.from('settings').select('hourly_rate,daily_target_hours').eq('user_id',user.id).maybeSingle()
   ]);
-  if(s.error||e.error||cfg.error||u.error){$('status').textContent='Could not load cloud data.';console.error(s.error,e.error,cfg.error,u.error);return}
-  days=s.data||[];expenses=e.data||[];unproductive=u.data||[];
+  if(s.error||e.error||cfg.error){
+    $('status').textContent='Could not load core cloud data.';
+    console.error('Core data error:',s.error,e.error,cfg.error);
+    return;
+  }
+  days=s.data||[];expenses=e.data||[];
   settings=cfg.data||{hourly_rate:5,daily_target_hours:4};
   $('rate').value=settings.hourly_rate;$('target').value=settings.daily_target_hours;
-  render();$('status').textContent='Ready to study';
+  // Render the important data immediately.
+  unproductive=[];
+  render();
+  $('status').textContent='Loading unproductive-time data…';
+
+  try{
+    const uPromise=sb.from('unproductive_sessions').select('id,description,duration_hours,deduction,created_at').eq('user_id',user.id).order('created_at',{ascending:false});
+    const timeout=new Promise((_,reject)=>setTimeout(()=>reject(new Error('Unproductive-time request timed out')),7000));
+    const u=await Promise.race([uPromise,timeout]);
+    if(u.error) throw u.error;
+    unproductive=u.data||[];
+    render();
+    $('status').textContent='Ready to study';
+  }catch(err){
+    console.error('Optional unproductive-time data error:',err);
+    unproductive=[];
+    render();
+    $('status').textContent='Ready to study (unproductive-time data unavailable)';
+  }
 }
 async function saveSettings(){
   if(!user)return;
