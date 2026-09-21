@@ -11,10 +11,10 @@
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.label{font-size:13px;color:#69757e}.value{font-size:26px;font-weight:700;margin-top:7px}.green{color:#138a4b}.red{color:#c0392b}.blue{color:#2463eb}.purple{color:#7a3db8}
 input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-size:16px;background:white}button{border:0;border-radius:9px;padding:11px 16px;margin:4px;cursor:pointer;font-size:15px}.primary{background:#2463eb;color:#fff}.start{background:#138a4b;color:#fff}.pause{background:#e3a008;color:#fff}.reset{background:#e74c3c;color:#fff}.secondary{background:#eef2f5}.delete{background:#fff0f0;color:#c0392b}
 .row{display:flex;gap:10px;align-items:end}.row>div{flex:1}.timer{text-align:center}.time{font-size:64px;font-weight:700;letter-spacing:2px}.rate{max-width:200px;margin:12px auto}.rate label{display:block;text-align:left;font-size:13px;color:#69757e;margin-bottom:5px}
-.bar{height:12px;background:#e8edf0;border-radius:99px;overflow:hidden;margin-top:10px}.fill{height:100%;width:0;background:#2463eb}.expense{display:flex;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid #edf0f2}.expense .info{flex:1;min-width:0}.expense small{display:block;color:#7a858e}
+.bar{height:12px;background:#e8edf0;border-radius:99px;overflow:hidden;margin-top:10px}.fill{height:100%;width:0;background:#2463eb}.expense,.session-item{display:flex;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid #edf0f2}.expense .info,.session-item .info{flex:1;min-width:0}.expense small,.session-item small{display:block;color:#7a858e}.session-list{max-height:420px;overflow:auto}.session-item .meta{display:flex;gap:12px;flex-wrap:wrap;color:#4f5b64;font-size:14px}.pomodoro{text-align:center}.pomo-time{font-size:52px;font-weight:700;letter-spacing:2px}.pomo-phase{font-weight:700;font-size:18px;margin:6px 0}.pomo-controls{margin-top:8px}.danger{background:#ffe7e7;color:#b42318}
 .auth{max-width:480px;margin:20px auto}.auth h2{margin-top:0}.auth-msg{padding:10px;border-radius:9px;background:#eef5ff;color:#24507a;margin-top:10px;display:none}.userbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-.hidden{display:none!important}.sessions{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:12px}.day{text-align:center}.daybar{height:80px;background:#e9edf0;border-radius:8px;display:flex;align-items:end;overflow:hidden}.dayfill{width:100%;background:#2463eb}.day small{font-size:11px;color:#69757e}
-@media(max-width:760px){.grid{grid-template-columns:repeat(2,1fr)}.time{font-size:46px}.sessions{grid-template-columns:repeat(4,1fr)}}@media(max-width:480px){.wrap{padding:12px}.grid{grid-template-columns:1fr}.row{flex-direction:column;align-items:stretch}.time{font-size:40px}}
+.hidden{display:none!important}.sessions{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:12px}.day{text-align:center}.daybar{height:80px;background:#e9edf0;border-radius:8px;display:flex;align-items:end;overflow:hidden}.dayfill{width:100%;background:#2463eb}.day small{font-size:11px;color:#69757e}.monthly-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.chart-box{border:1px solid #e4e9ed;border-radius:12px;padding:14px}.chart-title{font-weight:700;margin-bottom:4px}.chart-sub{font-size:12px;color:#69757e;margin-bottom:10px}.month-chart{height:180px;display:grid;grid-template-columns:repeat(30,1fr);gap:3px;align-items:end}.month-col{height:100%;display:flex;align-items:end;position:relative}.month-bar{width:100%;min-height:2px;border-radius:4px 4px 0 0;background:#2463eb}.expense-bar{background:#c0392b}.month-labels{display:grid;grid-template-columns:repeat(30,1fr);gap:3px;margin-top:5px}.month-labels span{font-size:9px;color:#69757e;text-align:center;overflow:hidden}.chart-total{font-size:18px;font-weight:700;margin-top:10px}.chart-total small{font-size:12px;font-weight:400;color:#69757e}@media(max-width:760px){.monthly-grid{grid-template-columns:1fr}}
+@media(max-width:760px){.grid{grid-template-columns:repeat(2,1fr)}.time{font-size:46px}.pomo-time{font-size:42px}.sessions{grid-template-columns:repeat(4,1fr)}}@media(max-width:480px){.wrap{padding:12px}.grid{grid-template-columns:1fr}.row{flex-direction:column;align-items:stretch}.time{font-size:40px}.pomo-time{font-size:38px}}
 </style>
 </head>
 <body>
@@ -48,7 +48,7 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 
 <div class="grid">
 <div class="card"><div class="label">Today's Study</div><div class="value blue" id="todayTime">0h 0m</div></div>
-<div class="card"><div class="label">Study Earnings</div><div class="value green" id="todayEarn">₹0.00</div></div>
+<div class="card"><div class="label">Today's Earnings</div><div class="value green" id="todayEarn">₹0.00</div></div>
 <div class="card"><div class="label">Total Expenses</div><div class="value red" id="totalExp">₹0.00</div></div>
 <div class="card"><div class="label">Net Balance</div><div class="value purple" id="net">₹0.00</div></div>
 </div>
@@ -60,6 +60,23 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 <button class="start" id="start">▶ Start Study</button>
 <button class="pause" id="pause" disabled>⏸ Pause</button>
 <button class="reset" id="reset">✓ Save Session</button>
+</div>
+
+<div class="card pomodoro">
+<h2>🍅 Pomodoro Timer</h2>
+<div class="pomo-phase" id="pomoPhase">Work Session</div>
+<div class="pomo-time" id="pomoTime">25:00</div>
+<div class="muted" id="pomoStatus">25 min work → 5 min break. Work time counts toward your study session.</div>
+<div class="row" style="margin-top:12px;text-align:left">
+<div><label class="label">Work (minutes)</label><input id="workMinutes" type="number" min="1" max="180" step="1" value="25"></div>
+<div><label class="label">Break (minutes)</label><input id="breakMinutes" type="number" min="1" max="60" step="1" value="5"></div>
+</div>
+<div class="pomo-controls">
+<button class="start" id="pomoStart">▶ Start Pomodoro</button>
+<button class="pause" id="pomoPause" disabled>⏸ Pause</button>
+<button class="secondary" id="pomoSkip">⏭ Skip</button>
+<button class="reset" id="pomoReset">↺ Reset</button>
+</div>
 </div>
 
 <div class="card">
@@ -85,6 +102,33 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 <h2>📊 Last 7 Days</h2>
 <div class="sessions" id="sessions"></div>
 </div>
+
+<div class="card">
+<h2>📅 Monthly Overview</h2>
+<p class="muted">Daily study time and expenses for the last 30 days.</p>
+<div class="monthly-grid">
+  <div class="chart-box">
+    <div class="chart-title">📚 Study Time</div>
+    <div class="chart-sub">Hours studied each day</div>
+    <div class="month-chart" id="monthlyStudyChart"></div>
+    <div class="month-labels" id="monthlyStudyLabels"></div>
+    <div class="chart-total" id="monthlyStudyTotal">0h <small>total study</small></div>
+  </div>
+  <div class="chart-box">
+    <div class="chart-title">💸 Expenses</div>
+    <div class="chart-sub">Money spent each day</div>
+    <div class="month-chart" id="monthlyExpenseChart"></div>
+    <div class="month-labels" id="monthlyExpenseLabels"></div>
+    <div class="chart-total" id="monthlyExpenseTotal">₹0.00 <small>total expenses</small></div>
+  </div>
+</div>
+</div>
+
+<div class="card">
+<h2>🗂️ Manage Study Sessions</h2>
+<p class="muted">Delete a session if you recorded it by mistake. Deleting a session also removes its stored study earnings from your totals.</p>
+<div id="sessionList" class="session-list"></div>
+</div>
 </div>
 </div>
 
@@ -102,6 +146,7 @@ const sb = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE
 (() => {
 const $=id=>document.getElementById(id);
 let elapsed=0,running=false,last=0,raf=null,user=null,days=[],expenses=[],settings={hourly_rate:5,daily_target_hours:4};
+let pomo={phase:'work',remaining:25*60,running:false,interval:null,cycles:0};
 
 function money(n){return '₹'+Number(n||0).toFixed(2)}
 function fmt(ms){let s=Math.floor(ms/1000),h=Math.floor(s/3600);s%=3600;let m=Math.floor(s/60),x=s%60;return [h,m,x].map(v=>String(v).padStart(2,'0')).join(':')}
@@ -158,21 +203,31 @@ async function saveSettings(){
 }
 function todayMs(){return days.filter(x=>x.start_time.slice(0,10)===dateKey()).reduce((a,x)=>a+Number(x.duration_seconds)*1000,0)+elapsed}
 function totalExp(){return expenses.reduce((a,x)=>a+Number(x.amount),0)}
+function totalEarn(){return days.reduce((a,x)=>a+Number(x.earnings||0),0)+(elapsed/3600000*(Number($('rate').value)||0))}
+function todayEarn(){return days.filter(x=>x.start_time.slice(0,10)===dateKey()).reduce((a,x)=>a+Number(x.earnings||0),0)+(elapsed/3600000*(Number($('rate').value)||0))}
 function render(){
  $('time').textContent=fmt(elapsed);
- const ms=todayMs(),rate=Number($('rate').value)||0,earn=ms/3600000*rate,exp=totalExp();
+ const ms=todayMs(),earnToday=todayEarn(),earnTotal=totalEarn(),exp=totalExp();
  $('todayTime').textContent=Math.floor(ms/3600000)+'h '+Math.floor((ms%3600000)/60000)+'m';
- $('todayEarn').textContent=money(earn);$('totalExp').textContent=money(exp);$('net').textContent=money(earn-exp);
+ $('todayEarn').textContent=money(earnToday);$('totalExp').textContent=money(exp);$('net').textContent=money(earnTotal-exp);
  const target=Math.max(.1,Number($('target').value)||4),pct=Math.min(100,ms/3600000/target*100);
  $('progressText').textContent=Math.round(pct)+'%';$('fill').style.width=pct+'%';
- renderExpenses();renderDays();
+ renderExpenses();renderDays();renderMonthlyCharts();renderSessionList();renderPomodoro();
 }
 function frame(now){if(!running)return;if(!last)last=now;elapsed+=now-last;last=now;render();raf=requestAnimationFrame(frame)}
-$('start').onclick=()=>{if(running)return;running=true;last=0;$('status').textContent='Studying…';$('start').disabled=true;$('pause').disabled=false;raf=requestAnimationFrame(frame)}
-$('pause').onclick=()=>{running=false;if(raf)cancelAnimationFrame(raf);raf=null;$('status').textContent='Paused';$('start').disabled=false;$('pause').disabled=true;render()}
+function startStudyTimer(){
+ if(running)return;
+ running=true;last=0;$('status').textContent='Studying…';$('start').disabled=true;$('pause').disabled=false;raf=requestAnimationFrame(frame);
+}
+function pauseStudyTimer(status='Paused'){
+ running=false;if(raf)cancelAnimationFrame(raf);raf=null;$('status').textContent=status;$('start').disabled=false;$('pause').disabled=true;render();
+}
+$('start').onclick=()=>{startStudyTimer()}
+$('pause').onclick=()=>{pauseStudyTimer(pomo.running?'Pomodoro paused':'Paused');if(pomo.running)pausePomodoroClock(false)}
 $('reset').onclick=async()=>{
  if(elapsed<=0){$('status').textContent='No study time to save.';return}
- if(running){running=false;if(raf)cancelAnimationFrame(raf);raf=null}
+ if(running)pauseStudyTimer('Saving session…');
+ if(pomo.running)pausePomodoroClock(false);
  const duration=Math.max(1,Math.round(elapsed/1000)),rate=Number($('rate').value)||0;
  $('status').textContent='Saving session…';
  const {data,error}=await sb.from('study_sessions').insert({user_id:user.id,start_time:new Date(Date.now()-elapsed).toISOString(),duration_seconds:duration,earnings:duration/3600*rate}).select().single();
@@ -199,9 +254,111 @@ function renderDays(){
  for(let i=6;i>=0;i--){let d=new Date();d.setDate(d.getDate()-i);let k=dateKey(d),v=days.filter(x=>x.start_time.slice(0,10)===k).reduce((a,x)=>a+Number(x.duration_seconds),0);max=Math.max(max,v);arr.push({d,v})}
  $('sessions').innerHTML=arr.map(x=>`<div class="day"><div class="daybar"><div class="dayfill" style="height:${Math.max(2,x.v/max*100)}%"></div></div><small>${x.d.toLocaleDateString(undefined,{weekday:'short'})}</small></div>`).join('')
 }
+function renderMonthlyCharts(){
+ const arr=[];let studyMax=1,expenseMax=1,studyTotal=0,expenseTotal=0;
+ for(let i=29;i>=0;i--){
+   let d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-i);
+   let k=dateKey(d);
+   let study=days.filter(x=>x.start_time.slice(0,10)===k).reduce((a,x)=>a+Number(x.duration_seconds),0)/3600;
+   let expense=expenses.filter(x=>x.created_at.slice(0,10)===k).reduce((a,x)=>a+Number(x.amount),0);
+   studyMax=Math.max(studyMax,study);expenseMax=Math.max(expenseMax,expense);studyTotal+=study;expenseTotal+=expense;arr.push({d,study,expense});
+ }
+ const studyBox=$('monthlyStudyChart'),expenseBox=$('monthlyExpenseChart');
+ studyBox.innerHTML=arr.map(x=>`<div class="month-col" title="${x.d.toLocaleDateString()}: ${x.study.toFixed(2)}h"><div class="month-bar" style="height:${Math.max(2,x.study/studyMax*100)}%"></div></div>`).join('');
+ expenseBox.innerHTML=arr.map(x=>`<div class="month-col" title="${x.d.toLocaleDateString()}: ${money(x.expense)}"><div class="month-bar expense-bar" style="height:${Math.max(2,x.expense/expenseMax*100)}%"></div></div>`).join('');
+ const labels=arr.map(x=>`<span>${x.d.getDate()===1||x.d.getDate()%5===0?x.d.getDate():''}</span>`).join('');
+ $('monthlyStudyLabels').innerHTML=labels;$('monthlyExpenseLabels').innerHTML=labels;
+ $('monthlyStudyTotal').innerHTML=`${Math.floor(studyTotal)}h ${Math.round((studyTotal%1)*60)}m <small>total study</small>`;
+ $('monthlyExpenseTotal').innerHTML=`${money(expenseTotal)} <small>total expenses</small>`;
+}
+function getWorkSeconds(){return Math.max(1,Number($('workMinutes').value)||25)*60}
+function getBreakSeconds(){return Math.max(1,Number($('breakMinutes').value)||5)*60}
+function formatPomo(sec){sec=Math.max(0,Math.floor(sec));return String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0')}
+function renderPomodoro(){
+ $('pomoPhase').textContent=pomo.phase==='work'?'Work Session':'Break';
+ $('pomoTime').textContent=formatPomo(pomo.remaining);
+ $('pomoStart').disabled=pomo.running;
+ $('pomoPause').disabled=!pomo.running;
+ $('pomoStatus').textContent=pomo.running
+   ? (pomo.phase==='work'?'Focus — this work time counts toward your study session.':'Break — study time is paused.')
+   : (pomo.phase==='work'?'Ready for the next work session.':'Break ready. Start to continue.');
+}
+function clearPomoInterval(){if(pomo.interval){clearInterval(pomo.interval);pomo.interval=null}}
+function startPomodoroClock(){
+ if(pomo.running)return;
+ pomo.running=true;
+ if(pomo.phase==='work')startStudyTimer();
+ pomo.interval=setInterval(()=>{
+   pomo.remaining--;
+   if(pomo.remaining<=0){
+     clearPomoInterval();
+     if(pomo.phase==='work'){
+       pomo.cycles++;
+       if(running)pauseStudyTimer('Pomodoro work complete — take a break ☕');
+       pomo.phase='break';pomo.remaining=getBreakSeconds();
+     }else{
+       pomo.phase='work';pomo.remaining=getWorkSeconds();startStudyTimer();
+     }
+   }
+   renderPomodoro();
+ },1000);
+ renderPomodoro();
+}
+function pausePomodoroClock(showStatus=true){
+ clearPomoInterval();pomo.running=false;
+ if(showStatus)renderPomodoro();
+}
+function resetPomodoro(){
+ clearPomoInterval();pomo.running=false;pomo.phase='work';pomo.remaining=getWorkSeconds();pomo.cycles=0;
+ if(running)pauseStudyTimer('Pomodoro reset');
+ renderPomodoro();
+}
+function skipPomodoro(){
+ clearPomoInterval();pomo.running=false;
+ if(pomo.phase==='work'){
+   if(running)pauseStudyTimer('Skipped work — break time');
+   pomo.phase='break';pomo.remaining=getBreakSeconds();
+ }else{
+   pomo.phase='work';pomo.remaining=getWorkSeconds();startStudyTimer();
+ }
+ renderPomodoro();
+}
+$('pomoStart').onclick=()=>startPomodoroClock();
+$('pomoPause').onclick=()=>{pausePomodoroClock();if(pomo.phase==='work'&&running)pauseStudyTimer('Pomodoro paused')};
+$('pomoSkip').onclick=()=>skipPomodoro();
+$('pomoReset').onclick=()=>resetPomodoro();
+$('workMinutes').oninput=()=>{if(!pomo.running&&pomo.phase==='work'){pomo.remaining=getWorkSeconds();renderPomodoro()}};
+$('breakMinutes').oninput=()=>{if(!pomo.running&&pomo.phase==='break'){pomo.remaining=getBreakSeconds();renderPomodoro()}};
+
+function renderSessionList(){
+ const box=$('sessionList');
+ if(!days.length){box.innerHTML='<div class="muted" style="text-align:center;padding:18px">No saved study sessions yet.</div>';return}
+ box.innerHTML=days.slice(0,50).map(s=>{
+   const start=new Date(s.start_time),dur=Number(s.duration_seconds)||0;
+   return `<div class="session-item">
+     <div class="info">
+       <b>${start.toLocaleDateString()} ${start.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</b>
+       <div class="meta"><span>⏱ ${fmt(dur*1000)}</span><span>💰 ${money(s.earnings)}</span></div>
+     </div>
+     <button class="danger" data-session-id="${s.id}">Delete</button>
+   </div>`;
+ }).join('');
+ box.querySelectorAll('[data-session-id]').forEach(b=>b.onclick=async()=>{
+   const id=b.dataset.sessionId;
+   const session=days.find(x=>String(x.id)===String(id));
+   if(!session)return;
+   const ok=confirm(`Delete this ${fmt(Number(session.duration_seconds)*1000)} study session and its ${money(session.earnings)} earnings?`);
+   if(!ok)return;
+   const {error}=await sb.from('study_sessions').delete().eq('id',id).eq('user_id',user.id);
+   if(error){alert('Could not delete session: '+error.message);return}
+   days=days.filter(x=>String(x.id)!==String(id));
+   render();
+ });
+}
+
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 $('login').onclick=authLogin;$('signup').onclick=authSignup;
-$('logout').onclick=async()=>{if(running){running=false;if(raf)cancelAnimationFrame(raf)}await sb.auth.signOut();location.reload()}
+$('logout').onclick=async()=>{if(running)pauseStudyTimer('Logging out…');clearPomoInterval();pomo.running=false;await sb.auth.signOut();location.reload()}
 if(configured){sb.auth.getSession().then(async({data})=>{if(data.session){user=data.session.user;await startApp()}})}
 })();
 </script>
