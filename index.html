@@ -50,6 +50,7 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 <div class="card"><div class="label">Today's Study</div><div class="value blue" id="todayTime">0h 0m</div></div>
 <div class="card"><div class="label">Today's Earnings</div><div class="value green" id="todayEarn">₹0.00</div></div>
 <div class="card"><div class="label">Total Expenses</div><div class="value red" id="totalExp">₹0.00</div></div>
+<div class="card"><div class="label">Unproductive Deduction</div><div class="value red" id="totalUnproductive">₹0.00</div></div>
 <div class="card"><div class="label">Net Balance</div><div class="value purple" id="net">₹0.00</div></div>
 </div>
 
@@ -100,6 +101,17 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 </div>
 
 <div class="card">
+<h2>⏳ Unproductive Hours</h2>
+<p class="muted">Enter time you consider unproductive. It will reduce your virtual money at your current ₹/hour rate.</p>
+<div class="row">
+<div><label class="label">Unproductive hours</label><input id="unproductiveHours" type="number" min="0.01" step="0.25" placeholder="1.5"></div>
+<div><label class="label">Reason / description</label><input id="unproductiveName" placeholder="Scrolling, gaming, wasting time, etc."></div>
+<button class="primary" id="addUnproductive">+ Add Unproductive Time</button>
+</div>
+<div id="unproductiveList"></div>
+</div>
+
+<div class="card">
 <h2>📊 Last 7 Days</h2>
 <div class="sessions" id="sessions"></div>
 </div>
@@ -146,7 +158,7 @@ const sb = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE
 
 (() => {
 const $=id=>document.getElementById(id);
-let elapsed=0,running=false,last=0,raf=null,user=null,days=[],expenses=[],settings={hourly_rate:5,daily_target_hours:4};
+let elapsed=0,running=false,last=0,raf=null,user=null,days=[],expenses=[],unproductive=[],settings={hourly_rate:5,daily_target_hours:4};
 let pomo={phase:'work',remaining:25*60,running:false,interval:null,cycles:0};
 
 function money(n){return '₹'+Number(n||0).toFixed(2)}
@@ -188,10 +200,11 @@ async function loadCloud(){
   const [s,e,cfg]=await Promise.all([
     sb.from('study_sessions').select('id,start_time,duration_seconds,earnings,session_name').eq('user_id',user.id).order('start_time',{ascending:false}),
     sb.from('expenses').select('id,description,amount,created_at').eq('user_id',user.id).order('created_at',{ascending:false}),
+    sb.from('unproductive_sessions').select('id,description,duration_hours,deduction,created_at').eq('user_id',user.id).order('created_at',{ascending:false}),
     sb.from('settings').select('hourly_rate,daily_target_hours').eq('user_id',user.id).maybeSingle()
   ]);
-  if(s.error||e.error||cfg.error){$('status').textContent='Could not load cloud data.';console.error(s.error,e.error,cfg.error);return}
-  days=s.data||[];expenses=e.data||[];
+  if(s.error||e.error||cfg.error||u.error){$('status').textContent='Could not load cloud data.';console.error(s.error,e.error,cfg.error,u.error);return}
+  days=s.data||[];expenses=e.data||[];unproductive=u.data||[];
   settings=cfg.data||{hourly_rate:5,daily_target_hours:4};
   $('rate').value=settings.hourly_rate;$('target').value=settings.daily_target_hours;
   render();$('status').textContent='Ready to study';
@@ -204,16 +217,17 @@ async function saveSettings(){
 }
 function todayMs(){return days.filter(x=>x.start_time.slice(0,10)===dateKey()).reduce((a,x)=>a+Number(x.duration_seconds)*1000,0)+elapsed}
 function totalExp(){return expenses.reduce((a,x)=>a+Number(x.amount),0)}
+function totalUnproductive(){return unproductive.reduce((a,x)=>a+Number(x.deduction||0),0)}
 function totalEarn(){return days.reduce((a,x)=>a+Number(x.earnings||0),0)+(elapsed/3600000*(Number($('rate').value)||0))}
 function todayEarn(){return days.filter(x=>x.start_time.slice(0,10)===dateKey()).reduce((a,x)=>a+Number(x.earnings||0),0)+(elapsed/3600000*(Number($('rate').value)||0))}
 function render(){
  $('time').textContent=fmt(elapsed);
- const ms=todayMs(),earnToday=todayEarn(),earnTotal=totalEarn(),exp=totalExp();
+ const ms=todayMs(),earnToday=todayEarn(),earnTotal=totalEarn(),exp=totalExp(),unprod=totalUnproductive();
  $('todayTime').textContent=Math.floor(ms/3600000)+'h '+Math.floor((ms%3600000)/60000)+'m';
- $('todayEarn').textContent=money(earnToday);$('totalExp').textContent=money(exp);$('net').textContent=money(earnTotal-exp);
+ $('todayEarn').textContent=money(earnToday);$('totalExp').textContent=money(exp);$('totalUnproductive').textContent=money(unprod);$('net').textContent=money(earnTotal-exp-unprod);
  const target=Math.max(.1,Number($('target').value)||4),pct=Math.min(100,ms/3600000/target*100);
  $('progressText').textContent=Math.round(pct)+'%';$('fill').style.width=pct+'%';
- renderExpenses();renderDays();renderMonthlyCharts();renderSessionList();renderPomodoro();
+ renderExpenses();renderUnproductive();renderDays();renderMonthlyCharts();renderSessionList();renderPomodoro();
 }
 function frame(now){if(!running)return;if(!last)last=now;elapsed+=now-last;last=now;render();raf=requestAnimationFrame(frame)}
 function startStudyTimer(){
@@ -244,6 +258,20 @@ $('add').onclick=async()=>{
  const {data,error}=await sb.from('expenses').insert({user_id:user.id,description,amount}).select().single();
  if(error){alert('Could not save expense: '+error.message);return}
  expenses.unshift(data);$('expenseName').value='';$('expenseAmount').value='';render()
+}
+$('addUnproductive').onclick=async()=>{
+ const hours=Number($('unproductiveHours').value),description=$('unproductiveName').value.trim()||'Unproductive Time',rate=Number($('rate').value)||0;
+ if(!Number.isFinite(hours)||hours<=0){alert('Enter a valid number of unproductive hours.');return}
+ const deduction=hours*rate;
+ const {data,error}=await sb.from('unproductive_sessions').insert({user_id:user.id,description,duration_hours:hours,deduction}).select().single();
+ if(error){alert('Could not save unproductive time: '+error.message);return}
+ unproductive.unshift(data);$('unproductiveHours').value='';$('unproductiveName').value='';render();
+}
+function renderUnproductive(){
+ const box=$('unproductiveList');
+ if(!unproductive.length){box.innerHTML='<div class="muted" style="text-align:center;padding:18px">No unproductive time recorded yet.</div>';return}
+ box.innerHTML=unproductive.map(x=>`<div class="expense"><div class="info"><b>${esc(x.description)}</b><small>${new Date(x.created_at).toLocaleString()} • ${Number(x.duration_hours).toFixed(2)} hours</small></div><b class="red">-${money(x.deduction)}</b><button class="delete" data-unproductive-id="${x.id}">Delete</button></div>`).join('');
+ box.querySelectorAll('[data-unproductive-id]').forEach(b=>b.onclick=async()=>{const id=b.dataset.unproductiveId;const item=unproductive.find(x=>String(x.id)===String(id));if(!item)return;const ok=confirm(`Delete ${Number(item.duration_hours).toFixed(2)} unproductive hours and restore ${money(item.deduction)} to your virtual balance?`);if(!ok)return;const {error}=await sb.from('unproductive_sessions').delete().eq('id',id).eq('user_id',user.id);if(error){alert('Could not delete record: '+error.message);return}unproductive=unproductive.filter(x=>String(x.id)!==String(id));render()})
 }
 function renderExpenses(){
  const box=$('expenseList');
