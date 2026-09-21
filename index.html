@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Study Money Tracker — Cloud</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f5f7;color:#17202a;font-family:Arial,sans-serif}
+.wrap{max-width:950px;margin:auto;padding:24px}.head{text-align:center;margin-bottom:20px}.head h1{margin:0 0 6px}.muted{color:#69757e}
+.card{background:#fff;border:1px solid #dde3e7;border-radius:16px;padding:18px;box-shadow:0 3px 12px #00000009;margin-top:16px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.label{font-size:13px;color:#69757e}.value{font-size:26px;font-weight:700;margin-top:7px}.green{color:#138a4b}.red{color:#c0392b}.blue{color:#2463eb}.purple{color:#7a3db8}
+input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-size:16px;background:white}button{border:0;border-radius:9px;padding:11px 16px;margin:4px;cursor:pointer;font-size:15px}.primary{background:#2463eb;color:#fff}.start{background:#138a4b;color:#fff}.pause{background:#e3a008;color:#fff}.reset{background:#e74c3c;color:#fff}.secondary{background:#eef2f5}.delete{background:#fff0f0;color:#c0392b}
+.row{display:flex;gap:10px;align-items:end}.row>div{flex:1}.timer{text-align:center}.time{font-size:64px;font-weight:700;letter-spacing:2px}.rate{max-width:200px;margin:12px auto}.rate label{display:block;text-align:left;font-size:13px;color:#69757e;margin-bottom:5px}
+.bar{height:12px;background:#e8edf0;border-radius:99px;overflow:hidden;margin-top:10px}.fill{height:100%;width:0;background:#2463eb}.expense{display:flex;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid #edf0f2}.expense .info{flex:1;min-width:0}.expense small{display:block;color:#7a858e}
+.auth{max-width:480px;margin:20px auto}.auth h2{margin-top:0}.auth-msg{padding:10px;border-radius:9px;background:#eef5ff;color:#24507a;margin-top:10px;display:none}.userbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.hidden{display:none!important}.sessions{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:12px}.day{text-align:center}.daybar{height:80px;background:#e9edf0;border-radius:8px;display:flex;align-items:end;overflow:hidden}.dayfill{width:100%;background:#2463eb}.day small{font-size:11px;color:#69757e}
+@media(max-width:760px){.grid{grid-template-columns:repeat(2,1fr)}.time{font-size:46px}.sessions{grid-template-columns:repeat(4,1fr)}}@media(max-width:480px){.wrap{padding:12px}.grid{grid-template-columns:1fr}.row{flex-direction:column;align-items:stretch}.time{font-size:40px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="head"><h1>📚 Study Money Tracker</h1><div class="muted">Study → earn virtual money → track your spending.</div></div>
+
+<div id="configNotice" class="card" style="border-color:#e3a008">
+<b>One-time setup:</b> open this HTML file in a text editor and replace the two values marked <code>PASTE_HERE</code> near the top of the JavaScript with your Supabase URL and Publishable key.
+</div>
+
+<div id="auth" class="card auth">
+<h2>🔐 Your account</h2>
+<p class="muted">Your study sessions and expenses will be saved to your Supabase account.</p>
+<label class="label">Email</label>
+<input id="email" type="email" placeholder="you@example.com">
+<br><br>
+<label class="label">Password</label>
+<input id="password" type="password" placeholder="At least 6 characters">
+<div>
+<button class="primary" id="login">Log in</button>
+<button class="secondary" id="signup">Create account</button>
+</div>
+<div class="auth-msg" id="authMsg"></div>
+</div>
+
+<div id="app" class="hidden">
+<div class="card userbar">
+<div><b>☁️ Cloud synced</b><div class="muted" id="userEmail"></div></div>
+<button class="secondary" id="logout">Log out</button>
+</div>
+
+<div class="grid">
+<div class="card"><div class="label">Today's Study</div><div class="value blue" id="todayTime">0h 0m</div></div>
+<div class="card"><div class="label">Study Earnings</div><div class="value green" id="todayEarn">₹0.00</div></div>
+<div class="card"><div class="label">Total Expenses</div><div class="value red" id="totalExp">₹0.00</div></div>
+<div class="card"><div class="label">Net Balance</div><div class="value purple" id="net">₹0.00</div></div>
+</div>
+
+<div class="card timer">
+<div class="time" id="time">00:00:00</div>
+<div class="muted" id="status">Ready to study</div>
+<div class="rate"><label>Virtual earning rate (₹/hour)</label><input id="rate" type="number" min="0" step=".5" value="5"></div>
+<button class="start" id="start">▶ Start Study</button>
+<button class="pause" id="pause" disabled>⏸ Pause</button>
+<button class="reset" id="reset">✓ Save Session</button>
+</div>
+
+<div class="card">
+<h2>🎯 Daily Study Target</h2>
+<div class="row">
+<div><label class="label">Target hours</label><input id="target" type="number" min=".1" step=".5" value="4"></div>
+<div><div class="label">Progress</div><div class="value" id="progressText">0%</div></div>
+</div>
+<div class="bar"><div class="fill" id="fill"></div></div>
+</div>
+
+<div class="card">
+<h2>💸 Add Expense</h2>
+<div class="row">
+<div><label class="label">Description</label><input id="expenseName" placeholder="Food, travel, etc."></div>
+<div><label class="label">Amount (₹)</label><input id="expenseAmount" type="number" min="0" step=".01" placeholder="100"></div>
+<button class="primary" id="add">+ Add Expense</button>
+</div>
+<div id="expenseList"></div>
+</div>
+
+<div class="card">
+<h2>📊 Last 7 Days</h2>
+<div class="sessions" id="sessions"></div>
+</div>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* =========================
+   PASTE YOUR SUPABASE VALUES HERE
+   ========================= */
+const SUPABASE_URL = "https://xuwgnylmyripjcvjtrqb.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_-prM788LEuaJTr6nsmawPQ_Rdm4LPoT";
+
+const configured = SUPABASE_URL !== "PASTE_HERE" && SUPABASE_PUBLISHABLE_KEY !== "PASTE_HERE";
+const sb = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY) : null;
+
+(() => {
+const $=id=>document.getElementById(id);
+let elapsed=0,running=false,last=0,raf=null,user=null,days=[],expenses=[],settings={hourly_rate:5,daily_target_hours:4};
+
+function money(n){return '₹'+Number(n||0).toFixed(2)}
+function fmt(ms){let s=Math.floor(ms/1000),h=Math.floor(s/3600);s%=3600;let m=Math.floor(s/60),x=s%60;return [h,m,x].map(v=>String(v).padStart(2,'0')).join(':')}
+function dateKey(d=new Date()){return d.toISOString().slice(0,10)}
+function showAuthMsg(msg){$('authMsg').textContent=msg;$('authMsg').style.display='block'}
+function hideAuthMsg(){$('authMsg').style.display='none'}
+
+if(!configured){
+  $('authMsg').style.display='block';
+  $('authMsg').textContent='Add your Supabase URL and Publishable key in the JavaScript configuration first.';
+  $('login').disabled=true;$('signup').disabled=true;
+}
+
+async function authLogin(){
+  hideAuthMsg();
+  const email=$('email').value.trim(),password=$('password').value;
+  if(!email||!password){showAuthMsg('Enter your email and password.');return}
+  const {data,error}=await sb.auth.signInWithPassword({email,password});
+  if(error){showAuthMsg(error.message);return}
+  user=data.user;await startApp();
+}
+async function authSignup(){
+  hideAuthMsg();
+  const email=$('email').value.trim(),password=$('password').value;
+  if(!email||password.length<6){showAuthMsg('Enter an email and a password of at least 6 characters.');return}
+  const {data,error}=await sb.auth.signUp({email,password});
+  if(error){showAuthMsg(error.message);return}
+  if(!data.session){showAuthMsg('Account created. Check your email to confirm the account, then log in.');return}
+  user=data.user;await startApp();
+}
+async function startApp(){
+  $('auth').classList.add('hidden');$('app').classList.remove('hidden');$('configNotice').classList.add('hidden');
+  $('userEmail').textContent=user.email||'';
+  await loadCloud();
+}
+async function loadCloud(){
+  $('status').textContent='Loading cloud data…';
+  const [s,e,cfg]=await Promise.all([
+    sb.from('study_sessions').select('id,start_time,duration_seconds,earnings').eq('user_id',user.id).order('start_time',{ascending:false}),
+    sb.from('expenses').select('id,description,amount,created_at').eq('user_id',user.id).order('created_at',{ascending:false}),
+    sb.from('settings').select('hourly_rate,daily_target_hours').eq('user_id',user.id).maybeSingle()
+  ]);
+  if(s.error||e.error||cfg.error){$('status').textContent='Could not load cloud data.';console.error(s.error,e.error,cfg.error);return}
+  days=s.data||[];expenses=e.data||[];
+  settings=cfg.data||{hourly_rate:5,daily_target_hours:4};
+  $('rate').value=settings.hourly_rate;$('target').value=settings.daily_target_hours;
+  render();$('status').textContent='Ready to study';
+}
+async function saveSettings(){
+  if(!user)return;
+  settings.hourly_rate=Math.max(0,Number($('rate').value)||0);
+  settings.daily_target_hours=Math.max(.1,Number($('target').value)||4);
+  await sb.from('settings').upsert({user_id:user.id,hourly_rate:settings.hourly_rate,daily_target_hours:settings.daily_target_hours});
+}
+function todayMs(){return days.filter(x=>x.start_time.slice(0,10)===dateKey()).reduce((a,x)=>a+Number(x.duration_seconds)*1000,0)+elapsed}
+function totalExp(){return expenses.reduce((a,x)=>a+Number(x.amount),0)}
+function render(){
+ $('time').textContent=fmt(elapsed);
+ const ms=todayMs(),rate=Number($('rate').value)||0,earn=ms/3600000*rate,exp=totalExp();
+ $('todayTime').textContent=Math.floor(ms/3600000)+'h '+Math.floor((ms%3600000)/60000)+'m';
+ $('todayEarn').textContent=money(earn);$('totalExp').textContent=money(exp);$('net').textContent=money(earn-exp);
+ const target=Math.max(.1,Number($('target').value)||4),pct=Math.min(100,ms/3600000/target*100);
+ $('progressText').textContent=Math.round(pct)+'%';$('fill').style.width=pct+'%';
+ renderExpenses();renderDays();
+}
+function frame(now){if(!running)return;if(!last)last=now;elapsed+=now-last;last=now;render();raf=requestAnimationFrame(frame)}
+$('start').onclick=()=>{if(running)return;running=true;last=0;$('status').textContent='Studying…';$('start').disabled=true;$('pause').disabled=false;raf=requestAnimationFrame(frame)}
+$('pause').onclick=()=>{running=false;if(raf)cancelAnimationFrame(raf);raf=null;$('status').textContent='Paused';$('start').disabled=false;$('pause').disabled=true;render()}
+$('reset').onclick=async()=>{
+ if(elapsed<=0){$('status').textContent='No study time to save.';return}
+ if(running){running=false;if(raf)cancelAnimationFrame(raf);raf=null}
+ const duration=Math.max(1,Math.round(elapsed/1000)),rate=Number($('rate').value)||0;
+ $('status').textContent='Saving session…';
+ const {data,error}=await sb.from('study_sessions').insert({user_id:user.id,start_time:new Date(Date.now()-elapsed).toISOString(),duration_seconds:duration,earnings:duration/3600*rate}).select().single();
+ if(error){$('status').textContent='Save failed: '+error.message;return}
+ days.unshift(data);elapsed=0;last=0;$('start').disabled=false;$('pause').disabled=true;$('status').textContent='Session saved ☁️';await saveSettings();render()
+}
+$('rate').oninput=()=>{render();saveSettings()}
+$('target').oninput=()=>{render();saveSettings()}
+$('add').onclick=async()=>{
+ const description=$('expenseName').value.trim()||'Expense',amount=Number($('expenseAmount').value);
+ if(!Number.isFinite(amount)||amount<=0)return;
+ const {data,error}=await sb.from('expenses').insert({user_id:user.id,description,amount}).select().single();
+ if(error){alert('Could not save expense: '+error.message);return}
+ expenses.unshift(data);$('expenseName').value='';$('expenseAmount').value='';render()
+}
+function renderExpenses(){
+ const box=$('expenseList');
+ if(!expenses.length){box.innerHTML='<div class="muted" style="text-align:center;padding:18px">No expenses yet.</div>';return}
+ box.innerHTML=expenses.map(e=>`<div class="expense"><div class="info"><b>${esc(e.description)}</b><small>${new Date(e.created_at).toLocaleString()}</small></div><b>${money(e.amount)}</b><button class="delete" data-id="${e.id}">Delete</button></div>`).join('');
+ box.querySelectorAll('.delete').forEach(b=>b.onclick=async()=>{const id=b.dataset.id;const {error}=await sb.from('expenses').delete().eq('id',id);if(error){alert(error.message);return}expenses=expenses.filter(x=>String(x.id)!==String(id));render()})
+}
+function renderDays(){
+ const arr=[];let max=1;
+ for(let i=6;i>=0;i--){let d=new Date();d.setDate(d.getDate()-i);let k=dateKey(d),v=days.filter(x=>x.start_time.slice(0,10)===k).reduce((a,x)=>a+Number(x.duration_seconds),0);max=Math.max(max,v);arr.push({d,v})}
+ $('sessions').innerHTML=arr.map(x=>`<div class="day"><div class="daybar"><div class="dayfill" style="height:${Math.max(2,x.v/max*100)}%"></div></div><small>${x.d.toLocaleDateString(undefined,{weekday:'short'})}</small></div>`).join('')
+}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+$('login').onclick=authLogin;$('signup').onclick=authSignup;
+$('logout').onclick=async()=>{if(running){running=false;if(raf)cancelAnimationFrame(raf)}await sb.auth.signOut();location.reload()}
+if(configured){sb.auth.getSession().then(async({data})=>{if(data.session){user=data.session.user;await startApp()}})}
+})();
+</script>
+</body>
+</html>
