@@ -56,12 +56,12 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 
 <div class="card timer">
 <div class="time" id="time">00:00:00</div>
-<div class="muted" id="status">Ready to study</div>
+<div class="muted" id="status">Ready to study</div><div class="muted" id="syncTimerStatus" style="margin-top:6px">Timer sync: ready</div>
 <div class="rate"><label>Virtual earning rate (₹/hour)</label><input id="rate" type="number" min="0" step=".5" value="5"></div>
 <button class="start" id="start">▶ Start Study</button>
 <button class="pause" id="pause" disabled>⏸ Pause</button>
 <div class="row" style="max-width:650px;margin:14px auto 0;text-align:left"><div><label class="label">Study session name</label><input id="sessionName" placeholder="e.g. DSA Practice, Physics, Coding"></div></div>
-<button class="reset" id="reset">✓ Save Session</button>
+<button class="reset" id="reset">■ End & Save Session</button>
 </div>
 
 <div class="card pomodoro">
@@ -159,6 +159,7 @@ const sb = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE
 (() => {
 const $=id=>document.getElementById(id);
 let elapsed=0,running=false,last=0,raf=null,user=null,days=[],expenses=[],unproductive=[],settings={hourly_rate:5,daily_target_hours:4};
+let activeSession=null,activeChannel=null,activeSyncTimer=null;
 let pomo={phase:'work',remaining:25*60,running:false,interval:null,cycles:0};
 
 function money(n){return '₹'+Number(n||0).toFixed(2)}
@@ -196,6 +197,46 @@ async function startApp(){
   $('userEmail').textContent=user.email||'';
   await loadCloud();
 }
+async function fetchActiveSession(){
+  if(!user)return null;
+  const {data,error}=await sb.from('active_study_sessions').select('user_id,session_name,status,session_started_at,started_at,accumulated_seconds,updated_at').eq('user_id',user.id).maybeSingle();
+  if(error){console.error('Active session load error:',error);return null}
+  return data||null;
+}
+function activeElapsedMs(a=activeSession){
+  if(!a)return 0;
+  let ms=Number(a.accumulated_seconds||0)*1000;
+  if(a.status==='running' && a.started_at) ms += Math.max(0,Date.now()-new Date(a.started_at).getTime());
+  return ms;
+}
+function applyActiveSession(a){
+  activeSession=a||null;
+  elapsed=activeElapsedMs(activeSession);
+  running=!!activeSession && activeSession.status==='running';
+  if(activeSession?.session_name) $('sessionName').value=activeSession.session_name;
+  $('start').disabled=running;
+  $('pause').disabled=!running;
+  $('reset').disabled=!activeSession;
+  $('syncTimerStatus').textContent=activeSession ? (running?'🟢 Live timer synced across devices':'⏸ Timer paused and synced') : 'Timer sync: ready';
+  if(running){ last=0; if(!raf) raf=requestAnimationFrame(frame); }
+  else { if(raf)cancelAnimationFrame(raf); raf=null; }
+  render();
+}
+async function subscribeActiveSession(){
+  if(activeChannel) await sb.removeChannel(activeChannel);
+  activeChannel=sb.channel('active-study-'+user.id)
+    .on('postgres_changes',{event:'*',schema:'public',table:'active_study_sessions',filter:'user_id=eq.'+user.id},payload=>{
+      applyActiveSession(payload.eventType==='DELETE'?null:payload.new);
+    }).subscribe();
+}
+function stopActiveSync(){
+  if(activeSyncTimer){clearInterval(activeSyncTimer);activeSyncTimer=null}
+}
+async function syncActiveSession(){
+  const a=await fetchActiveSession();
+  if(a && (!activeSession || a.updated_at!==activeSession.updated_at || a.status!==activeSession.status || a.started_at!==activeSession.started_at || a.accumulated_seconds!==activeSession.accumulated_seconds)) applyActiveSession(a);
+  else if(a) { activeSession=a; elapsed=activeElapsedMs(a); render(); }
+}
 async function loadCloud(){
   $('status').textContent='Loading cloud data…';
   // Load the original/core data first. A problem with the optional
@@ -214,9 +255,14 @@ async function loadCloud(){
   settings=cfg.data||{hourly_rate:5,daily_target_hours:4};
   $('rate').value=settings.hourly_rate;$('target').value=settings.daily_target_hours;
   // Render the important data immediately.
+  const active=await fetchActiveSession();
+  applyActiveSession(active);
+  await subscribeActiveSession();
+  stopActiveSync();
+  activeSyncTimer=setInterval(syncActiveSession,3000);
   unproductive=[];
   render();
-  $('status').textContent='Loading unproductive-time data…';
+  $('status').textContent=active ? (active.status==='running'?'Studying…':'Paused — resume when ready') : 'Ready to study';
 
   try{
     const uPromise=sb.from('unproductive_sessions').select('id,description,duration_hours,deduction,created_at').eq('user_id',user.id).order('created_at',{ascending:false});
@@ -253,27 +299,56 @@ function render(){
  $('progressText').textContent=Math.round(pct)+'%';$('fill').style.width=pct+'%';
  renderExpenses();renderUnproductive();renderDays();renderMonthlyCharts();renderSessionList();renderPomodoro();
 }
-function frame(now){if(!running)return;if(!last)last=now;elapsed+=now-last;last=now;render();raf=requestAnimationFrame(frame)}
-function startStudyTimer(){
- if(running)return;
- running=true;last=0;$('status').textContent='Studying…';$('start').disabled=true;$('pause').disabled=false;raf=requestAnimationFrame(frame);
+function frame(now){
+  if(!running)return;
+  elapsed=activeElapsedMs(activeSession);
+  render();
+  raf=requestAnimationFrame(frame);
 }
-function pauseStudyTimer(status='Paused'){
- running=false;if(raf)cancelAnimationFrame(raf);raf=null;$('status').textContent=status;$('start').disabled=false;$('pause').disabled=true;render();
+async function startStudyTimer(){
+  if(!user)return;
+  const existing=await fetchActiveSession();
+  if(existing?.status==='running'){applyActiveSession(existing);return}
+  const name=(existing?.session_name || $('sessionName').value.trim() || 'Study Session');
+  $('status').textContent='Starting timer…';
+  const now=new Date().toISOString();
+  let result;
+  if(existing){
+    result=await sb.from('active_study_sessions').update({status:'running',started_at:now,session_name:name,updated_at:now}).eq('user_id',user.id).select().single();
+  }else{
+    result=await sb.from('active_study_sessions').insert({user_id:user.id,session_name:name,status:'running',session_started_at:now,started_at:now,accumulated_seconds:0,updated_at:now}).select().single();
+  }
+  if(result.error){$('status').textContent='Could not start timer: '+result.error.message;return}
+  applyActiveSession(result.data);$('status').textContent='Studying…';
+}
+async function pauseStudyTimer(status='Paused'){
+  if(!activeSession || !running)return;
+  const current=Math.max(0,Math.round(activeElapsedMs(activeSession)/1000));
+  const {data,error}=await sb.from('active_study_sessions').update({status:'paused',started_at:null,accumulated_seconds:current,updated_at:new Date().toISOString()}).eq('user_id',user.id).select().single();
+  if(error){$('status').textContent='Could not pause timer: '+error.message;return}
+  applyActiveSession(data);$('status').textContent=status;
 }
 $('start').onclick=()=>{startStudyTimer()}
-$('pause').onclick=()=>{pauseStudyTimer(pomo.running?'Pomodoro paused':'Paused');if(pomo.running)pausePomodoroClock(false)}
+$('pause').onclick=async()=>{await pauseStudyTimer(pomo.running?'Pomodoro paused':'Paused');if(pomo.running)pausePomodoroClock(false)}
 $('reset').onclick=async()=>{
- if(elapsed<=0){$('status').textContent='No study time to save.';return}
- if(running)pauseStudyTimer('Saving session…');
- if(pomo.running)pausePomodoroClock(false);
- const duration=Math.max(1,Math.round(elapsed/1000)),rate=Number($('rate').value)||0;
- $('status').textContent='Saving session…';
- const session_name=($('sessionName').value.trim()||'Study Session');
- const {data,error}=await sb.from('study_sessions').insert({user_id:user.id,start_time:new Date(Date.now()-elapsed).toISOString(),duration_seconds:duration,earnings:duration/3600*rate,session_name}).select().single();
+ if(!activeSession){$('status').textContent='No active study session.';return}
+ $('status').textContent='Ending and saving session…';
+ const latest=await fetchActiveSession();
+ if(!latest){applyActiveSession(null);$('status').textContent='No active study session.';return}
+ const duration=Math.max(1,Math.round(activeElapsedMs(latest)/1000)),rate=Number($('rate').value)||0;
+ const session_name=(latest.session_name||$('sessionName').value.trim()||'Study Session');
+ const {data,error}=await sb.from('study_sessions').insert({user_id:user.id,start_time:(latest.session_started_at || new Date(Date.now()-duration*1000).toISOString()),duration_seconds:duration,earnings:duration/3600*rate,session_name}).select().single();
  if(error){$('status').textContent='Save failed: '+error.message;return}
- days.unshift(data);elapsed=0;last=0;$('sessionName').value='';$('start').disabled=false;$('pause').disabled=true;$('status').textContent='Session saved ☁️';await saveSettings();render()
+ const del=await sb.from('active_study_sessions').delete().eq('user_id',user.id);
+ if(del.error){$('status').textContent='Session saved, but active timer cleanup failed: '+del.error.message;return}
+ days.unshift(data);applyActiveSession(null);$('sessionName').value='';$('status').textContent='Session saved ☁️';await saveSettings();render();
 }
+$('sessionName').addEventListener('input',async()=>{
+ if(!activeSession||!user)return;
+ const name=$('sessionName').value.trim()||'Study Session';
+ const {data,error}=await sb.from('active_study_sessions').update({session_name:name,updated_at:new Date().toISOString()}).eq('user_id',user.id).select().single();
+ if(!error && data){activeSession=data;}
+});
 $('rate').oninput=()=>{render();saveSettings()}
 $('target').oninput=()=>{render();saveSettings()}
 $('add').onclick=async()=>{
@@ -426,7 +501,7 @@ function renderSessionList(){
 
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 $('login').onclick=authLogin;$('signup').onclick=authSignup;
-$('logout').onclick=async()=>{if(running)pauseStudyTimer('Logging out…');clearPomoInterval();pomo.running=false;await sb.auth.signOut();location.reload()}
+$('logout').onclick=async()=>{clearPomoInterval();pomo.running=false;stopActiveSync();if(activeChannel)await sb.removeChannel(activeChannel);await sb.auth.signOut();location.reload()}
 if(configured){sb.auth.getSession().then(async({data})=>{if(data.session){user=data.session.user;await startApp()}})}
 })();
 </script>
