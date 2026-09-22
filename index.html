@@ -160,6 +160,7 @@ const sb = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE
 const $=id=>document.getElementById(id);
 let elapsed=0,running=false,last=0,raf=null,user=null,days=[],expenses=[],unproductive=[],settings={hourly_rate:5,daily_target_hours:4};
 let activeSession=null,activeChannel=null,activeSyncTimer=null;
+let serverBaseMs=Date.now(), perfBase=performance.now();
 let pomo={phase:'work',remaining:25*60,running:false,interval:null,cycles:0};
 
 function money(n){return '₹'+Number(n||0).toFixed(2)}
@@ -203,10 +204,26 @@ async function fetchActiveSession(){
   if(error){console.error('Active session load error:',error);return null}
   return data||null;
 }
+function serverNowMs(){
+  return serverBaseMs + (performance.now()-perfBase);
+}
+async function syncServerClock(){
+  try{
+    const requestStart=performance.now();
+    const {data,error}=await sb.rpc('get_server_time');
+    const requestEnd=performance.now();
+    if(error) throw error;
+    const roundTrip=requestEnd-requestStart;
+    serverBaseMs=new Date(data).getTime()+(roundTrip/2);
+    perfBase=requestEnd;
+  }catch(error){
+    console.error('Server clock sync error:',error);
+  }
+}
 function activeElapsedMs(a=activeSession){
   if(!a)return 0;
   let ms=Number(a.accumulated_seconds||0)*1000;
-  if(a.status==='running' && a.started_at) ms += Math.max(0,Date.now()-new Date(a.started_at).getTime());
+  if(a.status==='running' && a.started_at) ms += Math.max(0,serverNowMs()-new Date(a.started_at).getTime());
   return ms;
 }
 function applyActiveSession(a){
@@ -255,11 +272,12 @@ async function loadCloud(){
   settings=cfg.data||{hourly_rate:5,daily_target_hours:4};
   $('rate').value=settings.hourly_rate;$('target').value=settings.daily_target_hours;
   // Render the important data immediately.
+  await syncServerClock();
   const active=await fetchActiveSession();
   applyActiveSession(active);
   await subscribeActiveSession();
   stopActiveSync();
-  activeSyncTimer=setInterval(syncActiveSession,3000);
+  activeSyncTimer=setInterval(async()=>{ await syncServerClock(); await syncActiveSession(); },3000);
   unproductive=[];
   render();
   $('status').textContent=active ? (active.status==='running'?'Studying…':'Paused — resume when ready') : 'Ready to study';
@@ -311,21 +329,17 @@ async function startStudyTimer(){
   if(existing?.status==='running'){applyActiveSession(existing);return}
   const name=(existing?.session_name || $('sessionName').value.trim() || 'Study Session');
   $('status').textContent='Starting timer…';
-  const now=new Date().toISOString();
-  let result;
-  if(existing){
-    result=await sb.from('active_study_sessions').update({status:'running',started_at:now,session_name:name,updated_at:now}).eq('user_id',user.id).select().single();
-  }else{
-    result=await sb.from('active_study_sessions').insert({user_id:user.id,session_name:name,status:'running',session_started_at:now,started_at:now,accumulated_seconds:0,updated_at:now}).select().single();
-  }
-  if(result.error){$('status').textContent='Could not start timer: '+result.error.message;return}
-  applyActiveSession(result.data);$('status').textContent='Studying…';
+  const {data,error}=await sb.rpc('start_active_study',{p_session_name:name});
+  if(error){$('status').textContent='Could not start timer: '+error.message;return}
+  await syncServerClock();
+  applyActiveSession(data);$('status').textContent='Studying…';
 }
 async function pauseStudyTimer(status='Paused'){
   if(!activeSession || !running)return;
-  const current=Math.max(0,Math.round(activeElapsedMs(activeSession)/1000));
-  const {data,error}=await sb.from('active_study_sessions').update({status:'paused',started_at:null,accumulated_seconds:current,updated_at:new Date().toISOString()}).eq('user_id',user.id).select().single();
+  $('status').textContent='Pausing timer…';
+  const {data,error}=await sb.rpc('pause_active_study');
   if(error){$('status').textContent='Could not pause timer: '+error.message;return}
+  await syncServerClock();
   applyActiveSession(data);$('status').textContent=status;
 }
 $('start').onclick=()=>{startStudyTimer()}
@@ -333,21 +347,22 @@ $('pause').onclick=async()=>{await pauseStudyTimer(pomo.running?'Pomodoro paused
 $('reset').onclick=async()=>{
  if(!activeSession){$('status').textContent='No active study session.';return}
  $('status').textContent='Ending and saving session…';
- const latest=await fetchActiveSession();
- if(!latest){applyActiveSession(null);$('status').textContent='No active study session.';return}
- const duration=Math.max(1,Math.round(activeElapsedMs(latest)/1000)),rate=Number($('rate').value)||0;
- const session_name=(latest.session_name||$('sessionName').value.trim()||'Study Session');
- const {data,error}=await sb.from('study_sessions').insert({user_id:user.id,start_time:(latest.session_started_at || new Date(Date.now()-duration*1000).toISOString()),duration_seconds:duration,earnings:duration/3600*rate,session_name}).select().single();
+ const rate=Number($('rate').value)||0;
+ const {data,error}=await sb.rpc('end_active_study',{p_hourly_rate:rate});
  if(error){$('status').textContent='Save failed: '+error.message;return}
- const del=await sb.from('active_study_sessions').delete().eq('user_id',user.id);
- if(del.error){$('status').textContent='Session saved, but active timer cleanup failed: '+del.error.message;return}
- days.unshift(data);applyActiveSession(null);$('sessionName').value='';$('status').textContent='Session saved ☁️';await saveSettings();render();
+ const saved=data?.saved;
+ if(saved) days.unshift(saved);
+ applyActiveSession(null);$('sessionName').value='';$('status').textContent='Session saved ☁️';await saveSettings();render();
 }
-$('sessionName').addEventListener('input',async()=>{
+let renameTimer=null;
+$('sessionName').addEventListener('input',()=>{
  if(!activeSession||!user)return;
- const name=$('sessionName').value.trim()||'Study Session';
- const {data,error}=await sb.from('active_study_sessions').update({session_name:name,updated_at:new Date().toISOString()}).eq('user_id',user.id).select().single();
- if(!error && data){activeSession=data;}
+ clearTimeout(renameTimer);
+ renameTimer=setTimeout(async()=>{
+   const name=$('sessionName').value.trim()||'Study Session';
+   const {data,error}=await sb.rpc('rename_active_study',{p_session_name:name});
+   if(!error && data) activeSession=data;
+ },350);
 });
 $('rate').oninput=()=>{render();saveSettings()}
 $('target').oninput=()=>{render();saveSettings()}
