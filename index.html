@@ -180,7 +180,7 @@ const sb = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE
 (() => {
 const $=id=>document.getElementById(id);
 let elapsed=0,running=false,last=0,raf=null,user=null,days=[],expenses=[],unproductive=[],settings={hourly_rate:15,daily_target_hours:4};
-let activeSession=null,activeChannel=null,activeSyncTimer=null;
+let activeSession=null,activeChannel=null,activeSyncTimer=null,cloudDataSyncTimer=null;
 let revisionSessions=[],activeRevision=null,revisionElapsed=0,revisionRunning=false,revisionRaf=null,revisionChannel=null,revisionSyncTimer=null;
 let serverBaseMs=Date.now(), perfBase=performance.now();
 let pomo={phase:'work',remaining:25*60,running:false,interval:null,cycles:0};
@@ -276,53 +276,104 @@ async function syncActiveSession(){
   if(a && (!activeSession || a.updated_at!==activeSession.updated_at || a.status!==activeSession.status || a.started_at!==activeSession.started_at || a.accumulated_seconds!==activeSession.accumulated_seconds)) applyActiveSession(a);
   else if(a) { activeSession=a; elapsed=activeElapsedMs(a); render(); }
 }
-async function loadCloud(){
-  $('status').textContent='Loading cloud data…';
-  // Load the original/core data first. A problem with the optional
-  // unproductive-time feature must never hide existing study/expense data.
-  const [s,e,cfg]=await Promise.all([
+async function fetchCloudData(){
+  if(!user)return false;
+
+  const [s,e,cfg,u,r]=await Promise.all([
     sb.from('study_sessions').select('id,start_time,duration_seconds,earnings,session_name').eq('user_id',user.id).order('start_time',{ascending:false}),
     sb.from('expenses').select('id,description,amount,created_at').eq('user_id',user.id).order('created_at',{ascending:false}),
-    sb.from('settings').select('hourly_rate,daily_target_hours').eq('user_id',user.id).maybeSingle()
+    sb.from('settings').select('hourly_rate,daily_target_hours').eq('user_id',user.id).maybeSingle(),
+    sb.from('unproductive_sessions').select('id,description,duration_hours,deduction,created_at').eq('user_id',user.id).order('created_at',{ascending:false}),
+    sb.from('revision_sessions').select('id,start_time,duration_seconds,session_name').eq('user_id',user.id).order('start_time',{ascending:false})
   ]);
-  if(s.error||e.error||cfg.error){
-    $('status').textContent='Could not load core cloud data.';
-    console.error('Core data error:',s.error,e.error,cfg.error);
+
+  if(s.error || e.error || cfg.error || u.error || r.error){
+    console.error('Cloud refresh error:',s.error,e.error,cfg.error,u.error,r.error);
+    return false;
+  }
+
+  days=s.data||[];
+  expenses=e.data||[];
+  unproductive=u.data||[];
+  revisionSessions=r.data||[];
+
+  settings=cfg.data||settings||{hourly_rate:15,daily_target_hours:4};
+
+  if(cfg.data && cfg.data.hourly_rate!=null){
+    $('rate').value=Number(cfg.data.hourly_rate);
+  }else{
+    $('rate').value=15;
+  }
+
+  $('target').value=Number(settings.daily_target_hours)||4;
+
+  render();
+  return true;
+}
+
+async function loadCloud(){
+  $('status').textContent='Loading cloud data…';
+
+  const loaded=await fetchCloudData();
+
+  if(!loaded){
+    $('status').textContent='Could not load cloud data.';
     return;
   }
-  days=s.data||[];expenses=e.data||[];
-  settings=cfg.data||{hourly_rate:15,daily_target_hours:4};
-  // Study default is ₹15/hour. Existing users can still edit the rate.
-  if(cfg.data && Number(cfg.data.hourly_rate)>0) $('rate').value=settings.hourly_rate; else $('rate').value=15;
-  $('target').value=settings.daily_target_hours;
-  $('revisionRate').value=30;
-  // Render the important data immediately.
+
   await syncServerClock();
+
   const active=await fetchActiveSession();
   applyActiveSession(active);
   await subscribeActiveSession();
+
   stopActiveSync();
-  activeSyncTimer=setInterval(async()=>{ await syncServerClock(); await syncActiveSession(); },3000);
-  unproductive=[];
-  render();
-  $('status').textContent=active ? (active.status==='running'?'Studying…':'Paused — resume when ready') : 'Ready to study';
+  activeSyncTimer=setInterval(async()=>{
+    await syncServerClock();
+    await syncActiveSession();
+  },2000);
+
   await loadRevisionSessions();
 
-  try{
-    const uPromise=sb.from('unproductive_sessions').select('id,description,duration_hours,deduction,created_at').eq('user_id',user.id).order('created_at',{ascending:false});
-    const timeout=new Promise((_,reject)=>setTimeout(()=>reject(new Error('Unproductive-time request timed out')),7000));
-    const u=await Promise.race([uPromise,timeout]);
-    if(u.error) throw u.error;
-    unproductive=u.data||[];
-    render();
-    $('status').textContent='Ready to study';
-  }catch(err){
-    console.error('Optional unproductive-time data error:',err);
-    unproductive=[];
-    render();
-    $('status').textContent='Ready to study (unproductive-time data unavailable)';
-  }
+  if(cloudDataSyncTimer)clearInterval(cloudDataSyncTimer);
+
+  cloudDataSyncTimer=setInterval(async()=>{
+    if(!user)return;
+
+    const hadStudy=!!activeSession;
+    const hadRevision=!!activeRevision;
+
+    await fetchCloudData();
+    await syncServerClock();
+
+    const latestStudy=await fetchActiveSession();
+
+    if(latestStudy){
+      applyActiveSession(latestStudy);
+    }else if(hadStudy){
+      applyActiveSession(null);
+    }
+
+    const latestRevision=await fetchActiveRevision();
+
+    if(latestRevision){
+      applyActiveRevision(latestRevision);
+    }else if(hadRevision){
+      applyActiveRevision(null);
+    }
+
+    $('status').textContent=
+      activeSession
+        ? (activeSession.status==='running'?'Studying…':'Paused — resume when ready')
+        : 'Ready to study';
+  },5000);
+
+  $('status').textContent=
+    active
+      ? (active.status==='running'?'Studying…':'Paused — resume when ready')
+      : 'Ready to study';
 }
+
 async function saveSettings(){
   if(!user)return;
   settings.hourly_rate=Math.max(0,Number($('rate').value)||0);
@@ -509,7 +560,7 @@ async function loadRevisionSessions(){
   applyActiveRevision(await fetchActiveRevision());
   await subscribeActiveRevision();
   stopRevisionSync();
-  revisionSyncTimer=setInterval(async()=>{await syncServerClock();await syncActiveRevision()},3000);
+  revisionSyncTimer=setInterval(async()=>{await syncServerClock();await syncActiveRevision()},2000);
 }
 function revisionFrame(){
   if(!revisionRunning)return;
@@ -675,7 +726,7 @@ function renderSessionList(){
 
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 $('login').onclick=authLogin;$('signup').onclick=authSignup;
-$('logout').onclick=async()=>{clearPomoInterval();pomo.running=false;stopActiveSync();stopRevisionSync();if(activeChannel)await sb.removeChannel(activeChannel);await sb.auth.signOut();location.reload()}
+$('logout').onclick=async()=>{clearPomoInterval();pomo.running=false;stopActiveSync();stopRevisionSync();if(cloudDataSyncTimer){clearInterval(cloudDataSyncTimer);cloudDataSyncTimer=null;}if(activeChannel)await sb.removeChannel(activeChannel);await sb.auth.signOut();location.reload()}
 if(configured){sb.auth.getSession().then(async({data})=>{if(data.session){user=data.session.user;await startApp()}})}
 })();
 </script>
