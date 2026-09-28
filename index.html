@@ -49,7 +49,9 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 <div class="grid">
 <div class="card"><div class="label">Today's Study</div><div class="value blue" id="todayTime">0h 0m</div></div>
 <div class="card"><div class="label">Today's Revision</div><div class="value purple" id="todayRevision">0h 0m</div></div>
-<div class="card"><div class="label">Today's Earnings</div><div class="value green" id="todayEarn">₹0.00</div></div>
+<div class="card"><div class="label">Study Earnings</div><div class="value green" id="todayStudyEarn">₹0.00</div></div>
+<div class="card"><div class="label">Revision Earnings</div><div class="value green" id="todayRevisionEarn">₹0.00</div></div>
+<div class="card"><div class="label">Today's Total Earnings</div><div class="value green" id="todayEarn">₹0.00</div></div>
 <div class="card"><div class="label">Total Expenses</div><div class="value red" id="totalExp">₹0.00</div></div>
 <div class="card"><div class="label">Unproductive Deduction</div><div class="value red" id="totalUnproductive">₹0.00</div></div>
 <div class="card"><div class="label">Net Balance</div><div class="value purple" id="net">₹0.00</div></div>
@@ -58,7 +60,7 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 <div class="card timer">
 <div class="time" id="time">00:00:00</div>
 <div class="muted" id="status">Ready to study</div><div class="muted" id="syncTimerStatus" style="margin-top:6px">Timer sync: ready</div>
-<div class="rate"><label>Virtual earning rate (₹/hour)</label><input id="rate" type="number" min="0" step=".5" value="5"></div>
+<div class="rate"><label>Virtual earning rate (₹/hour)</label><input id="rate" type="number" min="0" step=".5" value="15"></div>
 <button class="start" id="start">▶ Start Study</button>
 <button class="pause" id="pause" disabled>⏸ Pause</button>
 <div class="row" style="max-width:650px;margin:14px auto 0;text-align:left"><div><label class="label">Study session name</label><input id="sessionName" placeholder="e.g. DSA Practice, Physics, Coding"></div></div>
@@ -69,16 +71,14 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 <h2>🔄 Revision Tracker</h2>
 <div class="time" id="revisionTime">00:00:00</div>
 <div class="muted" id="revisionStatus">Ready to revise</div>
-<div class="row" style="max-width:650px;margin:14px auto 0;text-align:left">
-  <div><label class="label">Revision subject / session name</label><input id="revisionName" placeholder="e.g. Digital Logic Revision, DSA Revision"></div>
-</div>
+<div class="rate"><label>Revision earning rate (₹/hour)</label><input id="revisionRate" type="number" min="0" step=".5" value="30"></div>
+<div class="row" style="max-width:650px;margin:14px auto 0;text-align:left"><div><label class="label">Revision session name</label><input id="revisionName" placeholder="e.g. Digital Logic Revision, DSA Revision"></div></div>
 <button class="start" id="revisionStart">▶ Start Revision</button>
 <button class="pause" id="revisionPause" disabled>⏸ Pause</button>
 <button class="reset" id="revisionReset" disabled>■ End & Save Revision</button>
-<div class="muted" style="margin-top:10px">Revision time is tracked separately from study time and does not affect earnings.</div>
+<div class="muted" style="margin-top:10px">Revision earns ₹30/hour by default. It is tracked separately from study time.</div>
 </div>
 
-<div class="card">
 <div class="card pomodoro">
 <h2>🍅 Pomodoro Timer</h2>
 <div class="pomo-phase" id="pomoPhase">Work Session</div>
@@ -154,7 +154,7 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 
 <div class="card">
 <h2>🔄 Revision History</h2>
-<p class="muted">Your completed revision sessions are stored in Supabase separately from study sessions.</p>
+<p class="muted">Completed revision sessions are stored in Supabase and available on all devices.</p>
 <div id="revisionList" class="session-list"></div>
 </div>
 
@@ -179,10 +179,9 @@ const sb = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE
 
 (() => {
 const $=id=>document.getElementById(id);
-let elapsed=0,running=false,last=0,raf=null,user=null,days=[],expenses=[],unproductive=[],settings={hourly_rate:5,daily_target_hours:4};
+let elapsed=0,running=false,last=0,raf=null,user=null,days=[],expenses=[],unproductive=[],settings={hourly_rate:15,daily_target_hours:4};
 let activeSession=null,activeChannel=null,activeSyncTimer=null;
-let revisionSessions=[],revisionElapsed=0,revisionRunning=false,revisionStartedAt=0,revisionLast=0,revisionRaf=null;
-let revisionStorageKey='';
+let revisionSessions=[],activeRevision=null,revisionElapsed=0,revisionRunning=false,revisionRaf=null,revisionChannel=null,revisionSyncTimer=null;
 let serverBaseMs=Date.now(), perfBase=performance.now();
 let pomo={phase:'work',remaining:25*60,running:false,interval:null,cycles:0};
 
@@ -292,10 +291,11 @@ async function loadCloud(){
     return;
   }
   days=s.data||[];expenses=e.data||[];
-  settings=cfg.data||{hourly_rate:5,daily_target_hours:4};
-  revisionStorageKey='study-money-revision-'+user.id;
-  await loadRevisionSessions();
-  $('rate').value=settings.hourly_rate;$('target').value=settings.daily_target_hours;
+  settings=cfg.data||{hourly_rate:15,daily_target_hours:4};
+  // Study default is ₹15/hour. Existing users can still edit the rate.
+  if(cfg.data && Number(cfg.data.hourly_rate)>0) $('rate').value=settings.hourly_rate; else $('rate').value=15;
+  $('target').value=settings.daily_target_hours;
+  $('revisionRate').value=30;
   // Render the important data immediately.
   await syncServerClock();
   const active=await fetchActiveSession();
@@ -306,6 +306,7 @@ async function loadCloud(){
   unproductive=[];
   render();
   $('status').textContent=active ? (active.status==='running'?'Studying…':'Paused — resume when ready') : 'Ready to study';
+  await loadRevisionSessions();
 
   try{
     const uPromise=sb.from('unproductive_sessions').select('id,description,duration_hours,deduction,created_at').eq('user_id',user.id).order('created_at',{ascending:false});
@@ -331,8 +332,13 @@ async function saveSettings(){
 function todayMs(){return days.filter(x=>localDateKey(x.start_time)===dateKey()).reduce((a,x)=>a+Number(x.duration_seconds)*1000,0)+elapsed}
 function totalExp(){return expenses.reduce((a,x)=>a+Number(x.amount),0)}
 function totalUnproductive(){return unproductive.reduce((a,x)=>a+Number(x.deduction||0),0)}
-function totalEarn(){return days.reduce((a,x)=>a+Number(x.earnings||0),0)+(elapsed/3600000*(Number($('rate').value)||0))}
-function todayEarn(){return days.filter(x=>localDateKey(x.start_time)===dateKey()).reduce((a,x)=>a+Number(x.earnings||0),0)+(elapsed/3600000*(Number($('rate').value)||0))}
+function revisionRate(){return Math.max(0,Number($('revisionRate').value)||30)}
+function totalRevisionEarn(){return revisionSessions.reduce((a,x)=>a+(Number(x.duration_seconds||0)/3600*revisionRate()),0)+(revisionElapsed/3600000*revisionRate())}
+function todayRevisionEarn(){return revisionSessions.filter(x=>localDateKey(x.start_time)===dateKey()).reduce((a,x)=>a+(Number(x.duration_seconds||0)/3600*revisionRate()),0)+(revisionElapsed/3600000*revisionRate())}
+function totalStudyEarn(){return days.reduce((a,x)=>a+Number(x.earnings||0),0)+(elapsed/3600000*(Number($('rate').value)||0))}
+function todayStudyEarn(){return days.filter(x=>localDateKey(x.start_time)===dateKey()).reduce((a,x)=>a+Number(x.earnings||0),0)+(elapsed/3600000*(Number($('rate').value)||0))}
+function totalEarn(){return totalStudyEarn()+totalRevisionEarn()}
+function todayEarn(){return todayStudyEarn()+todayRevisionEarn()}
 function render(){
  $('time').textContent=fmt(elapsed);
  const ms=todayMs(),earnToday=todayEarn(),earnTotal=totalEarn(),exp=totalExp(),unprod=totalUnproductive();
@@ -340,7 +346,7 @@ function render(){
  $('todayEarn').textContent=money(earnToday);$('totalExp').textContent=money(exp);$('totalUnproductive').textContent=money(unprod);$('net').textContent=money(earnTotal-exp-unprod);
  const target=Math.max(.1,Number($('target').value)||4),pct=Math.min(100,ms/3600000/target*100);
  $('progressText').textContent=Math.round(pct)+'%';$('fill').style.width=pct+'%';
- renderExpenses();renderUnproductive();renderDays();renderMonthlyCharts();renderSessionList();renderPomodoro();
+ renderExpenses();renderUnproductive();renderDays();renderMonthlyCharts();renderSessionList();renderRevisionList();renderRevisionControls();renderPomodoro();
 }
 function frame(now){
   if(!running)return;
@@ -442,141 +448,131 @@ function renderMonthlyCharts(){
 }
 
 function todayRevisionMs(){
-  return revisionSessions
-    .filter(x=>localDateKey(x.start_time)===dateKey())
+  return revisionSessions.filter(x=>localDateKey(x.start_time)===dateKey())
     .reduce((a,x)=>a+Number(x.duration_seconds||0)*1000,0)+revisionElapsed;
 }
-function saveRevisionLocal(){
-  if(!revisionStorageKey)return;
-  localStorage.setItem(revisionStorageKey,JSON.stringify({
-    elapsed:revisionElapsed,
-    running:revisionRunning,
-    startedAt:revisionStartedAt,
-    name:$('revisionName').value.trim()
-  }));
+async function fetchActiveRevision(){
+  if(!user)return null;
+  const {data,error}=await sb.from('active_revision_sessions')
+    .select('user_id,session_name,status,session_started_at,started_at,accumulated_seconds,updated_at')
+    .eq('user_id',user.id).maybeSingle();
+  if(error){console.error('Active revision load error:',error);return null}
+  return data||null;
 }
-function loadRevisionLocal(){
-  try{
-    const raw=localStorage.getItem(revisionStorageKey);
-    if(!raw)return;
-    const x=JSON.parse(raw);
-    revisionElapsed=Number(x.elapsed)||0;
-    revisionRunning=!!x.running;
-    revisionStartedAt=Number(x.startedAt)||0;
-    if(x.name)$('revisionName').value=x.name;
-    if(revisionRunning && revisionStartedAt){
-      revisionElapsed += Math.max(0,Date.now()-revisionStartedAt);
-      revisionStartedAt=Date.now();
-      startRevisionFrame();
-    }else{
-      revisionRunning=false;
-    }
-  }catch(e){console.error('Revision local state error:',e)}
+function activeRevisionElapsedMs(a=activeRevision){
+  if(!a)return 0;
+  let ms=Number(a.accumulated_seconds||0)*1000;
+  if(a.status==='running'&&a.started_at)
+    ms+=Math.max(0,serverNowMs()-new Date(a.started_at).getTime());
+  return ms;
+}
+function applyActiveRevision(a){
+  activeRevision=a||null;
+  revisionElapsed=activeRevisionElapsedMs(a);
+  revisionRunning=!!a&&a.status==='running';
+  if(a?.session_name)$('revisionName').value=a.session_name;
+  $('revisionStart').disabled=revisionRunning;
+  $('revisionPause').disabled=!revisionRunning;
+  $('revisionReset').disabled=!a;
+  $('revisionStatus').textContent=a?(revisionRunning?'🟢 Live revision timer synced across devices':'⏸ Revision paused and synced'):'Ready to revise';
+  if(revisionRunning){
+    if(!revisionRaf)revisionRaf=requestAnimationFrame(revisionFrame);
+  }else{
+    if(revisionRaf)cancelAnimationFrame(revisionRaf);
+    revisionRaf=null;
+  }
+  render();
+}
+async function subscribeActiveRevision(){
+  if(revisionChannel)await sb.removeChannel(revisionChannel);
+  revisionChannel=sb.channel('active-revision-'+user.id)
+    .on('postgres_changes',{event:'*',schema:'public',table:'active_revision_sessions',filter:'user_id=eq.'+user.id},
+      payload=>applyActiveRevision(payload.eventType==='DELETE'?null:payload.new))
+    .subscribe();
+}
+function stopRevisionSync(){
+  if(revisionSyncTimer){clearInterval(revisionSyncTimer);revisionSyncTimer=null}
+  if(revisionChannel){sb.removeChannel(revisionChannel);revisionChannel=null}
+}
+async function syncActiveRevision(){
+  const a=await fetchActiveRevision();
+  if(a && (!activeRevision||a.updated_at!==activeRevision.updated_at||a.status!==activeRevision.status||a.started_at!==activeRevision.started_at||a.accumulated_seconds!==activeRevision.accumulated_seconds))
+    applyActiveRevision(a);
+  else if(!a&&activeRevision)applyActiveRevision(null);
+  else if(a){activeRevision=a;revisionElapsed=activeRevisionElapsedMs(a);render();}
 }
 async function loadRevisionSessions(){
   const {data,error}=await sb.from('revision_sessions')
-    .select('id,start_time,duration_seconds,session_name')
-    .eq('user_id',user.id)
-    .order('start_time',{ascending:false});
-  if(error){
-    console.error('Revision data error:',error);
-    revisionSessions=[];
-  }else revisionSessions=data||[];
-  revisionElapsed=0;revisionRunning=false;revisionStartedAt=0;
-  loadRevisionLocal();
+    .select('id,start_time,duration_seconds,session_name').eq('user_id',user.id).order('start_time',{ascending:false});
+  if(error){console.error('Revision history error:',error);revisionSessions=[]}else revisionSessions=data||[];
+  await syncServerClock();
+  applyActiveRevision(await fetchActiveRevision());
+  await subscribeActiveRevision();
+  stopRevisionSync();
+  revisionSyncTimer=setInterval(async()=>{await syncServerClock();await syncActiveRevision()},3000);
 }
+function revisionFrame(){
+  if(!revisionRunning)return;
+  revisionElapsed=activeRevisionElapsedMs(activeRevision);
+  $('revisionTime').textContent=fmt(revisionElapsed);
+  revisionRaf=requestAnimationFrame(revisionFrame);
+}
+async function startRevision(){
+  const existing=await fetchActiveRevision();
+  if(existing?.status==='running'){applyActiveRevision(existing);return}
+  $('revisionStatus').textContent='Starting revision timer…';
+  const {data,error}=await sb.rpc('start_active_revision',{p_session_name:$('revisionName').value.trim()||'Revision Session'});
+  if(error){$('revisionStatus').textContent='Could not start revision: '+error.message;return}
+  await syncServerClock();applyActiveRevision(data);
+}
+async function pauseRevision(){
+  if(!activeRevision||!revisionRunning)return;
+  $('revisionStatus').textContent='Pausing revision timer…';
+  const {data,error}=await sb.rpc('pause_active_revision');
+  if(error){$('revisionStatus').textContent='Could not pause revision: '+error.message;return}
+  await syncServerClock();applyActiveRevision(data);
+}
+async function endRevision(){
+  if(!activeRevision){$('revisionStatus').textContent='No active revision session.';return}
+  $('revisionStatus').textContent='Ending and saving revision…';
+  const {data,error}=await sb.rpc('end_active_revision');
+  if(error){$('revisionStatus').textContent='Save failed: '+error.message;return}
+  if(data?.saved)revisionSessions.unshift(data.saved);
+  applyActiveRevision(null);$('revisionName').value='';$('revisionStatus').textContent='Revision saved ☁️';render();
+}
+let revisionRenameTimer=null;
+$('revisionName').addEventListener('input',()=>{
+  if(!activeRevision||!user)return;
+  clearTimeout(revisionRenameTimer);
+  revisionRenameTimer=setTimeout(async()=>{
+    const {data,error}=await sb.rpc('rename_active_revision',{p_session_name:$('revisionName').value.trim()||'Revision Session'});
+    if(!error&&data)activeRevision=data;
+  },350);
+});
+$('revisionStart').onclick=()=>startRevision();
+$('revisionPause').onclick=()=>pauseRevision();
+$('revisionReset').onclick=()=>endRevision();
+$('revisionRate').oninput=()=>render();
 function renderRevisionControls(){
   $('revisionStart').disabled=revisionRunning;
   $('revisionPause').disabled=!revisionRunning;
-  $('revisionReset').disabled=revisionElapsed<=0;
-  $('revisionStatus').textContent=revisionRunning?'Revising…':(revisionElapsed?'Paused — resume when ready':'Ready to revise');
-}
-function startRevisionFrame(){
-  if(revisionRaf)cancelAnimationFrame(revisionRaf);
-  const frame=()=>{
-    if(!revisionRunning)return;
-    revisionElapsed += Math.max(0,Date.now()-revisionLast);
-    revisionLast=Date.now();
-    $('revisionTime').textContent=fmt(revisionElapsed);
-    renderRevisionControls();
-    render();
-    revisionRaf=requestAnimationFrame(frame);
-  };
-  revisionLast=Date.now();
-  revisionRaf=requestAnimationFrame(frame);
-}
-function startRevision(){
-  if(revisionRunning)return;
-  revisionRunning=true;
-  revisionStartedAt=Date.now();
-  saveRevisionLocal();
-  startRevisionFrame();
-  render();
-}
-function pauseRevision(){
-  if(!revisionRunning)return;
-  revisionElapsed += Math.max(0,Date.now()-revisionLast);
-  revisionRunning=false;
-  revisionStartedAt=0;
-  if(revisionRaf)cancelAnimationFrame(revisionRaf);
-  revisionRaf=null;
-  saveRevisionLocal();
-  render();
-}
-async function endRevision(){
-  if(revisionRunning)pauseRevision();
-  if(revisionElapsed<1000){render();return}
-  const session_name=$('revisionName').value.trim()||'Revision Session';
-  const duration_seconds=Math.floor(revisionElapsed/1000);
-  const start_time=new Date(Date.now()-revisionElapsed).toISOString();
-  const {data,error}=await sb.from('revision_sessions')
-    .insert({user_id:user.id,session_name,start_time,duration_seconds})
-    .select().single();
-  if(error){
-    alert('Could not save revision session: '+error.message);
-    return;
-  }
-  revisionSessions.unshift(data);
-  revisionElapsed=0;revisionRunning=false;revisionStartedAt=0;
-  if(revisionRaf)cancelAnimationFrame(revisionRaf);
-  revisionRaf=null;
-  localStorage.removeItem(revisionStorageKey);
-  $('revisionName').value='';
-  render();
+  $('revisionReset').disabled=!activeRevision;
+  $('revisionTime').textContent=fmt(revisionElapsed);
 }
 function renderRevisionList(){
   const box=$('revisionList');
-  if(!revisionSessions.length){
-    box.innerHTML='<div class="muted" style="text-align:center;padding:18px">No revision sessions yet.</div>';
-    return;
-  }
+  if(!revisionSessions.length){box.innerHTML='<div class="muted" style="text-align:center;padding:18px">No revision sessions yet.</div>';return}
   box.innerHTML=revisionSessions.slice(0,50).map(s=>{
     const start=new Date(s.start_time),dur=Number(s.duration_seconds)||0;
-    return `<div class="session-item">
-      <div class="info">
-        <b>${esc(s.session_name||'Revision Session')}</b>
-        <small>${start.toLocaleDateString()} ${start.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small>
-        <div class="meta"><span>🔄 ${fmt(dur*1000)}</span></div>
-      </div>
-      <button class="danger" data-revision-id="${s.id}">Delete</button>
-    </div>`;
+    return `<div class="session-item"><div class="info"><b>${esc(s.session_name||'Revision Session')}</b><small>${start.toLocaleDateString()} ${start.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small><div class="meta"><span>🔄 ${fmt(dur*1000)}</span><span>💰 ${money(dur/3600*revisionRate())}</span></div></div><button class="danger" data-revision-id="${s.id}">Delete</button></div>`;
   }).join('');
   box.querySelectorAll('[data-revision-id]').forEach(b=>b.onclick=async()=>{
-    const id=b.dataset.revisionId;
-    const item=revisionSessions.find(x=>String(x.id)===String(id));
-    if(!item)return;
-    const ok=confirm(`Delete this ${fmt(Number(item.duration_seconds)*1000)} revision session?`);
-    if(!ok)return;
+    const id=b.dataset.revisionId,item=revisionSessions.find(x=>String(x.id)===String(id));if(!item)return;
+    if(!confirm(`Delete this ${fmt(Number(item.duration_seconds)*1000)} revision session?`))return;
     const {error}=await sb.from('revision_sessions').delete().eq('id',id).eq('user_id',user.id);
-    if(error){alert('Could not delete revision session: '+error.message);return}
-    revisionSessions=revisionSessions.filter(x=>String(x.id)!==String(id));
-    render();
+    if(error){alert(error.message);return} revisionSessions=revisionSessions.filter(x=>String(x.id)!==String(id));render();
   });
 }
-$('revisionStart').onclick=()=>startRevision();
-$('revisionPause').onclick=()=>{pauseRevision();render()};
-$('revisionReset').onclick=()=>endRevision();
-window.addEventListener('beforeunload',saveRevisionLocal);
 
 function getWorkSeconds(){return Math.max(1,Number($('workMinutes').value)||25)*60}
 function getBreakSeconds(){return Math.max(1,Number($('breakMinutes').value)||5)*60}
@@ -679,7 +675,7 @@ function renderSessionList(){
 
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 $('login').onclick=authLogin;$('signup').onclick=authSignup;
-$('logout').onclick=async()=>{saveRevisionLocal();if(revisionRaf)cancelAnimationFrame(revisionRaf);revisionRaf=null;revisionRunning=false;clearPomoInterval();pomo.running=false;stopActiveSync();if(activeChannel)await sb.removeChannel(activeChannel);await sb.auth.signOut();location.reload()}
+$('logout').onclick=async()=>{clearPomoInterval();pomo.running=false;stopActiveSync();stopRevisionSync();if(activeChannel)await sb.removeChannel(activeChannel);await sb.auth.signOut();location.reload()}
 if(configured){sb.auth.getSession().then(async({data})=>{if(data.session){user=data.session.user;await startApp()}})}
 })();
 </script>
