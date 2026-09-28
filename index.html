@@ -48,6 +48,7 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 
 <div class="grid">
 <div class="card"><div class="label">Today's Study</div><div class="value blue" id="todayTime">0h 0m</div></div>
+<div class="card"><div class="label">Today's Revision</div><div class="value purple" id="todayRevision">0h 0m</div></div>
 <div class="card"><div class="label">Today's Earnings</div><div class="value green" id="todayEarn">₹0.00</div></div>
 <div class="card"><div class="label">Total Expenses</div><div class="value red" id="totalExp">₹0.00</div></div>
 <div class="card"><div class="label">Unproductive Deduction</div><div class="value red" id="totalUnproductive">₹0.00</div></div>
@@ -64,6 +65,20 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 <button class="reset" id="reset">■ End & Save Session</button>
 </div>
 
+<div class="card timer">
+<h2>🔄 Revision Tracker</h2>
+<div class="time" id="revisionTime">00:00:00</div>
+<div class="muted" id="revisionStatus">Ready to revise</div>
+<div class="row" style="max-width:650px;margin:14px auto 0;text-align:left">
+  <div><label class="label">Revision subject / session name</label><input id="revisionName" placeholder="e.g. Digital Logic Revision, DSA Revision"></div>
+</div>
+<button class="start" id="revisionStart">▶ Start Revision</button>
+<button class="pause" id="revisionPause" disabled>⏸ Pause</button>
+<button class="reset" id="revisionReset" disabled>■ End & Save Revision</button>
+<div class="muted" style="margin-top:10px">Revision time is tracked separately from study time and does not affect earnings.</div>
+</div>
+
+<div class="card">
 <div class="card pomodoro">
 <h2>🍅 Pomodoro Timer</h2>
 <div class="pomo-phase" id="pomoPhase">Work Session</div>
@@ -138,6 +153,12 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 </div>
 
 <div class="card">
+<h2>🔄 Revision History</h2>
+<p class="muted">Your completed revision sessions are stored in Supabase separately from study sessions.</p>
+<div id="revisionList" class="session-list"></div>
+</div>
+
+<div class="card">
 <h2>🗂️ Manage Study Sessions</h2>
 <p class="muted">Delete a session if you recorded it by mistake. Deleting a session also removes its stored study earnings from your totals.</p>
 <div id="sessionList" class="session-list"></div>
@@ -160,6 +181,8 @@ const sb = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE
 const $=id=>document.getElementById(id);
 let elapsed=0,running=false,last=0,raf=null,user=null,days=[],expenses=[],unproductive=[],settings={hourly_rate:5,daily_target_hours:4};
 let activeSession=null,activeChannel=null,activeSyncTimer=null;
+let revisionSessions=[],revisionElapsed=0,revisionRunning=false,revisionStartedAt=0,revisionLast=0,revisionRaf=null;
+let revisionStorageKey='';
 let serverBaseMs=Date.now(), perfBase=performance.now();
 let pomo={phase:'work',remaining:25*60,running:false,interval:null,cycles:0};
 
@@ -270,6 +293,8 @@ async function loadCloud(){
   }
   days=s.data||[];expenses=e.data||[];
   settings=cfg.data||{hourly_rate:5,daily_target_hours:4};
+  revisionStorageKey='study-money-revision-'+user.id;
+  await loadRevisionSessions();
   $('rate').value=settings.hourly_rate;$('target').value=settings.daily_target_hours;
   // Render the important data immediately.
   await syncServerClock();
@@ -415,6 +440,144 @@ function renderMonthlyCharts(){
  $('monthlyStudyTotal').innerHTML=`${Math.floor(studyTotal)}h ${Math.round((studyTotal%1)*60)}m <small>total study</small>`;
  $('monthlyExpenseTotal').innerHTML=`${money(expenseTotal)} <small>total expenses</small>`;
 }
+
+function todayRevisionMs(){
+  return revisionSessions
+    .filter(x=>localDateKey(x.start_time)===dateKey())
+    .reduce((a,x)=>a+Number(x.duration_seconds||0)*1000,0)+revisionElapsed;
+}
+function saveRevisionLocal(){
+  if(!revisionStorageKey)return;
+  localStorage.setItem(revisionStorageKey,JSON.stringify({
+    elapsed:revisionElapsed,
+    running:revisionRunning,
+    startedAt:revisionStartedAt,
+    name:$('revisionName').value.trim()
+  }));
+}
+function loadRevisionLocal(){
+  try{
+    const raw=localStorage.getItem(revisionStorageKey);
+    if(!raw)return;
+    const x=JSON.parse(raw);
+    revisionElapsed=Number(x.elapsed)||0;
+    revisionRunning=!!x.running;
+    revisionStartedAt=Number(x.startedAt)||0;
+    if(x.name)$('revisionName').value=x.name;
+    if(revisionRunning && revisionStartedAt){
+      revisionElapsed += Math.max(0,Date.now()-revisionStartedAt);
+      revisionStartedAt=Date.now();
+      startRevisionFrame();
+    }else{
+      revisionRunning=false;
+    }
+  }catch(e){console.error('Revision local state error:',e)}
+}
+async function loadRevisionSessions(){
+  const {data,error}=await sb.from('revision_sessions')
+    .select('id,start_time,duration_seconds,session_name')
+    .eq('user_id',user.id)
+    .order('start_time',{ascending:false});
+  if(error){
+    console.error('Revision data error:',error);
+    revisionSessions=[];
+  }else revisionSessions=data||[];
+  revisionElapsed=0;revisionRunning=false;revisionStartedAt=0;
+  loadRevisionLocal();
+}
+function renderRevisionControls(){
+  $('revisionStart').disabled=revisionRunning;
+  $('revisionPause').disabled=!revisionRunning;
+  $('revisionReset').disabled=revisionElapsed<=0;
+  $('revisionStatus').textContent=revisionRunning?'Revising…':(revisionElapsed?'Paused — resume when ready':'Ready to revise');
+}
+function startRevisionFrame(){
+  if(revisionRaf)cancelAnimationFrame(revisionRaf);
+  const frame=()=>{
+    if(!revisionRunning)return;
+    revisionElapsed += Math.max(0,Date.now()-revisionLast);
+    revisionLast=Date.now();
+    $('revisionTime').textContent=fmt(revisionElapsed);
+    renderRevisionControls();
+    render();
+    revisionRaf=requestAnimationFrame(frame);
+  };
+  revisionLast=Date.now();
+  revisionRaf=requestAnimationFrame(frame);
+}
+function startRevision(){
+  if(revisionRunning)return;
+  revisionRunning=true;
+  revisionStartedAt=Date.now();
+  saveRevisionLocal();
+  startRevisionFrame();
+  render();
+}
+function pauseRevision(){
+  if(!revisionRunning)return;
+  revisionElapsed += Math.max(0,Date.now()-revisionLast);
+  revisionRunning=false;
+  revisionStartedAt=0;
+  if(revisionRaf)cancelAnimationFrame(revisionRaf);
+  revisionRaf=null;
+  saveRevisionLocal();
+  render();
+}
+async function endRevision(){
+  if(revisionRunning)pauseRevision();
+  if(revisionElapsed<1000){render();return}
+  const session_name=$('revisionName').value.trim()||'Revision Session';
+  const duration_seconds=Math.floor(revisionElapsed/1000);
+  const start_time=new Date(Date.now()-revisionElapsed).toISOString();
+  const {data,error}=await sb.from('revision_sessions')
+    .insert({user_id:user.id,session_name,start_time,duration_seconds})
+    .select().single();
+  if(error){
+    alert('Could not save revision session: '+error.message);
+    return;
+  }
+  revisionSessions.unshift(data);
+  revisionElapsed=0;revisionRunning=false;revisionStartedAt=0;
+  if(revisionRaf)cancelAnimationFrame(revisionRaf);
+  revisionRaf=null;
+  localStorage.removeItem(revisionStorageKey);
+  $('revisionName').value='';
+  render();
+}
+function renderRevisionList(){
+  const box=$('revisionList');
+  if(!revisionSessions.length){
+    box.innerHTML='<div class="muted" style="text-align:center;padding:18px">No revision sessions yet.</div>';
+    return;
+  }
+  box.innerHTML=revisionSessions.slice(0,50).map(s=>{
+    const start=new Date(s.start_time),dur=Number(s.duration_seconds)||0;
+    return `<div class="session-item">
+      <div class="info">
+        <b>${esc(s.session_name||'Revision Session')}</b>
+        <small>${start.toLocaleDateString()} ${start.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small>
+        <div class="meta"><span>🔄 ${fmt(dur*1000)}</span></div>
+      </div>
+      <button class="danger" data-revision-id="${s.id}">Delete</button>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('[data-revision-id]').forEach(b=>b.onclick=async()=>{
+    const id=b.dataset.revisionId;
+    const item=revisionSessions.find(x=>String(x.id)===String(id));
+    if(!item)return;
+    const ok=confirm(`Delete this ${fmt(Number(item.duration_seconds)*1000)} revision session?`);
+    if(!ok)return;
+    const {error}=await sb.from('revision_sessions').delete().eq('id',id).eq('user_id',user.id);
+    if(error){alert('Could not delete revision session: '+error.message);return}
+    revisionSessions=revisionSessions.filter(x=>String(x.id)!==String(id));
+    render();
+  });
+}
+$('revisionStart').onclick=()=>startRevision();
+$('revisionPause').onclick=()=>{pauseRevision();render()};
+$('revisionReset').onclick=()=>endRevision();
+window.addEventListener('beforeunload',saveRevisionLocal);
+
 function getWorkSeconds(){return Math.max(1,Number($('workMinutes').value)||25)*60}
 function getBreakSeconds(){return Math.max(1,Number($('breakMinutes').value)||5)*60}
 function formatPomo(sec){sec=Math.max(0,Math.floor(sec));return String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0')}
@@ -516,7 +679,7 @@ function renderSessionList(){
 
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 $('login').onclick=authLogin;$('signup').onclick=authSignup;
-$('logout').onclick=async()=>{clearPomoInterval();pomo.running=false;stopActiveSync();if(activeChannel)await sb.removeChannel(activeChannel);await sb.auth.signOut();location.reload()}
+$('logout').onclick=async()=>{saveRevisionLocal();if(revisionRaf)cancelAnimationFrame(revisionRaf);revisionRaf=null;revisionRunning=false;clearPomoInterval();pomo.running=false;stopActiveSync();if(activeChannel)await sb.removeChannel(activeChannel);await sb.auth.signOut();location.reload()}
 if(configured){sb.auth.getSession().then(async({data})=>{if(data.session){user=data.session.user;await startApp()}})}
 })();
 </script>
