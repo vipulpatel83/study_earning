@@ -47,11 +47,11 @@ input{width:100%;padding:11px;border:1px solid #cfd6dc;border-radius:9px;font-si
 </div>
 
 <div class="grid">
-<div class="card"><div class="label">Today's Study</div><div class="value blue" id="todayTime">0h 0m</div></div>
-<div class="card"><div class="label">Today's Revision</div><div class="value purple" id="todayRevision">0h 0m</div></div>
+<div class="card"><div class="label">Today's Study (India)</div><div class="value blue" id="todayTime">0h 0m</div></div>
+<div class="card"><div class="label">Today's Revision (India)</div><div class="value purple" id="todayRevision">0h 0m</div></div>
 <div class="card"><div class="label">Study Earnings</div><div class="value green" id="todayStudyEarn">₹0.00</div></div>
 <div class="card"><div class="label">Revision Earnings</div><div class="value green" id="todayRevisionEarn">₹0.00</div></div>
-<div class="card"><div class="label">Today's Total Earnings</div><div class="value green" id="todayEarn">₹0.00</div></div>
+<div class="card"><div class="label">Today's Total Earnings (India)</div><div class="value green" id="todayEarn">₹0.00</div></div>
 <div class="card"><div class="label">Total Expenses</div><div class="value red" id="totalExp">₹0.00</div></div>
 <div class="card"><div class="label">Unproductive Deduction</div><div class="value red" id="totalUnproductive">₹0.00</div></div>
 <div class="card"><div class="label">Net Balance</div><div class="value purple" id="net">₹0.00</div></div>
@@ -187,7 +187,14 @@ let pomo={phase:'work',remaining:25*60,running:false,interval:null,cycles:0};
 
 function money(n){return '₹'+Number(n||0).toFixed(2)}
 function fmt(ms){let s=Math.floor(ms/1000),h=Math.floor(s/3600);s%=3600;let m=Math.floor(s/60),x=s%60;return [h,m,x].map(v=>String(v).padStart(2,'0')).join(':')}
-function dateKey(d=new Date()){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+const APP_TIME_ZONE='Asia/Kolkata';
+function dateKey(d=new Date()){
+  const parts=new Intl.DateTimeFormat('en-CA',{
+    timeZone:APP_TIME_ZONE,year:'numeric',month:'2-digit',day:'2-digit'
+  }).formatToParts(d);
+  const get=t=>parts.find(x=>x.type===t)?.value||'00';
+  return get('year')+'-'+get('month')+'-'+get('day');
+}
 function localDateKey(iso){return dateKey(new Date(iso))}
 function showAuthMsg(msg){$('authMsg').textContent=msg;$('authMsg').style.display='block'}
 function hideAuthMsg(){$('authMsg').style.display='none'}
@@ -380,14 +387,31 @@ async function saveSettings(){
   settings.daily_target_hours=Math.max(.1,Number($('target').value)||4);
   await sb.from('settings').upsert({user_id:user.id,hourly_rate:settings.hourly_rate,daily_target_hours:settings.daily_target_hours});
 }
-function todayMs(){return days.filter(x=>localDateKey(x.start_time)===dateKey()).reduce((a,x)=>a+Number(x.duration_seconds)*1000,0)+elapsed}
+function todayKey(){return dateKey(new Date())}
+function todayStudySessions(){return days.filter(x=>localDateKey(x.start_time)===todayKey())}
+function todayRevisionSessions(){return revisionSessions.filter(x=>localDateKey(x.start_time)===todayKey())}
+function todayMs(){
+  return todayStudySessions().reduce((a,x)=>a+Number(x.duration_seconds||0)*1000,0)+elapsed;
+}
 function totalExp(){return expenses.reduce((a,x)=>a+Number(x.amount),0)}
 function totalUnproductive(){return unproductive.reduce((a,x)=>a+Number(x.deduction||0),0)}
 function revisionRate(){return Math.max(0,Number($('revisionRate').value)||30)}
-function totalRevisionEarn(){return revisionSessions.reduce((a,x)=>a+(Number(x.duration_seconds||0)/3600*revisionRate()),0)+(revisionElapsed/3600000*revisionRate())}
-function todayRevisionEarn(){return revisionSessions.filter(x=>localDateKey(x.start_time)===dateKey()).reduce((a,x)=>a+(Number(x.duration_seconds||0)/3600*revisionRate()),0)+(revisionElapsed/3600000*revisionRate())}
-function totalStudyEarn(){return days.reduce((a,x)=>a+Number(x.earnings||0),0)+(elapsed/3600000*(Number($('rate').value)||0))}
-function todayStudyEarn(){return days.filter(x=>localDateKey(x.start_time)===dateKey()).reduce((a,x)=>a+Number(x.earnings||0),0)+(elapsed/3600000*(Number($('rate').value)||0))}
+function totalRevisionEarn(){
+  return revisionSessions.reduce((a,x)=>a+(Number(x.duration_seconds||0)/3600*revisionRate()),0)
+    +(revisionElapsed/3600000*revisionRate());
+}
+function todayRevisionEarn(){
+  return todayRevisionSessions().reduce((a,x)=>a+(Number(x.duration_seconds||0)/3600*revisionRate()),0)
+    +(revisionElapsed/3600000*revisionRate());
+}
+function totalStudyEarn(){
+  return days.reduce((a,x)=>a+Number(x.earnings||0),0)
+    +(elapsed/3600000*(Number($('rate').value)||0));
+}
+function todayStudyEarn(){
+  return todayStudySessions().reduce((a,x)=>a+Number(x.earnings||0),0)
+    +(elapsed/3600000*(Number($('rate').value)||0));
+}
 function totalEarn(){return totalStudyEarn()+totalRevisionEarn()}
 function todayEarn(){return todayStudyEarn()+todayRevisionEarn()}
 function render(){
